@@ -104,7 +104,7 @@ struct RemeshArgs {
     #[arg(short, long, default_value = "128")]
     resolution: usize,
 
-    /// Grid padding in voxels
+    /// Grid padding percentage around the bounding box
     #[arg(long, default_value = "3")]
     padding: usize,
 
