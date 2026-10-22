@@ -17,7 +17,7 @@ pub mod voxel;
 pub mod weld;
 pub mod workflows;
 
-pub use decimate::{decimate_mesh, DecimateOptions, DecimateReport, DecimationStats};
+pub use decimate::{decimate_mesh, decimate_with_options, DecimateOptions, DecimateReport, DecimationStats};
 pub use env::{detect_hardware, EnvironmentInfo, HardwareProfile};
 pub use error::{Result, WatertightError};
 pub use hole_filler::{fill_holes, HoleFillReport, HoleFillerStats};
@@ -109,6 +109,7 @@ pub fn auto_repair(input_mesh: &Mesh, config: &RepairConfig) -> Result<(Mesh, Ve
                 resolution: config.voxel_resolution,
                 padding: 0.05,
                 iso_level: 0.5,
+                keep_cavities: false,
             };
             current_mesh = voxelize_and_remesh(&current_mesh, &remesh_opts)?;
             log.push(format!(

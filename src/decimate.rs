@@ -7,7 +7,7 @@
 use crate::mesh::Mesh;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 /// 4x4 Symmetric Quadric Matrix
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -134,16 +134,62 @@ impl Default for DecimateOptions {
     }
 }
 
-/// Decimates a mesh down to `target_faces` using Quadric Error Metric edge collapse.
-pub fn decimate_mesh(mesh: &Mesh, target_faces: usize) -> (Mesh, DecimationStats) {
+/// Returns true if collapsing `u`/`v` onto `target` would degenerate `tri` or flip its normal.
+fn would_invert_or_degenerate(
+    tri: [usize; 3],
+    u: usize,
+    v: usize,
+    target: [f64; 3],
+    vertices: &[[f64; 3]],
+) -> bool {
+    let p0 = if tri[0] == u || tri[0] == v { target } else { vertices[tri[0]] };
+    let p1 = if tri[1] == u || tri[1] == v { target } else { vertices[tri[1]] };
+    let p2 = if tri[2] == u || tri[2] == v { target } else { vertices[tri[2]] };
+
+    let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+    let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+    let n = [
+        e1[1] * e2[2] - e1[2] * e2[1],
+        e1[2] * e2[0] - e1[0] * e2[2],
+        e1[0] * e2[1] - e1[1] * e2[0],
+    ];
+    let len_sq = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
+    if len_sq < 1e-28 {
+        // Post-collapse triangle collapses to zero area.
+        return true;
+    }
+
+    // Compare against the triangle's original normal.
+    let q0 = vertices[tri[0]];
+    let q1 = vertices[tri[1]];
+    let q2 = vertices[tri[2]];
+    let oe1 = [q1[0] - q0[0], q1[1] - q0[1], q1[2] - q0[2]];
+    let oe2 = [q2[0] - q0[0], q2[1] - q0[1], q2[2] - q0[2]];
+    let n_orig = [
+        oe1[1] * oe2[2] - oe1[2] * oe2[1],
+        oe1[2] * oe2[0] - oe1[0] * oe2[2],
+        oe1[0] * oe2[1] - oe1[1] * oe2[0],
+    ];
+    let orig_len_sq = n_orig[0] * n_orig[0] + n_orig[1] * n_orig[1] + n_orig[2] * n_orig[2];
+    if orig_len_sq < 1e-28 {
+        // Original triangle was already degenerate; only require the result to be non-degenerate.
+        return false;
+    }
+
+    let dot = n[0] * n_orig[0] + n[1] * n_orig[1] + n[2] * n_orig[2];
+    dot < 0.0
+}
+
+/// Decimates a mesh using Quadric Error Metric edge collapse with explicit options.
+pub fn decimate_with_options(mesh: &Mesh, opts: &DecimateOptions) -> (Mesh, DecimationStats) {
     let mut stats = DecimationStats {
         original_faces: mesh.faces.len(),
-        target_faces,
+        target_faces: opts.target_faces,
         original_vertices: mesh.vertices.len(),
         ..Default::default()
     };
 
-    if mesh.faces.len() <= target_faces || mesh.faces.is_empty() {
+    if mesh.faces.len() <= opts.target_faces || mesh.faces.is_empty() {
         stats.final_faces = mesh.faces.len();
         stats.final_vertices = mesh.vertices.len();
         return (mesh.clone(), stats);
@@ -186,6 +232,24 @@ pub fn decimate_mesh(mesh: &Mesh, target_faces: usize) -> (Mesh, DecimationStats
         vertex_to_faces[i0].insert(f_idx);
         vertex_to_faces[i1].insert(f_idx);
         vertex_to_faces[i2].insert(f_idx);
+    }
+
+    // Boundary vertices: incident to an edge shared by exactly one face.
+    let mut boundary_vertex = vec![false; num_verts];
+    if opts.preserve_boundary {
+        let mut edge_face_count: HashMap<(usize, usize), usize> = HashMap::new();
+        for &[i0, i1, i2] in &mesh.faces {
+            for &(a, b) in &[(i0, i1), (i1, i2), (i2, i0)] {
+                let canon = if a < b { (a, b) } else { (b, a) };
+                *edge_face_count.entry(canon).or_default() += 1;
+            }
+        }
+        for (&(a, b), &count) in &edge_face_count {
+            if count == 1 {
+                boundary_vertex[a] = true;
+                boundary_vertex[b] = true;
+            }
+        }
     }
 
     // 2. Identify initial unique edges and compute collapse costs
@@ -233,13 +297,18 @@ pub fn decimate_mesh(mesh: &Mesh, target_faces: usize) -> (Mesh, DecimationStats
     let mut active_faces = mesh.faces.len();
     let mut vertex_alive = vec![true; num_verts];
 
-    while active_faces > target_faces {
+    while active_faces > opts.target_faces {
         let candidate = match heap.pop() {
             Some(c) => c,
             None => break,
         };
         let u = candidate.v0;
         let v = candidate.v1;
+
+        if candidate.cost > opts.max_error {
+            // Heap is min-ordered: every remaining candidate is at least this costly.
+            break;
+        }
 
         if !vertex_alive[u] || !vertex_alive[v] {
             continue;
@@ -260,27 +329,18 @@ pub fn decimate_mesh(mesh: &Mesh, target_faces: usize) -> (Mesh, DecimationStats
                     continue;
                 }
 
-                // Check normal flip
-                let p0 = if tri[0] == u || tri[0] == v { target_pt } else { vertices[tri[0]] };
-                let p1 = if tri[1] == u || tri[1] == v { target_pt } else { vertices[tri[1]] };
-                let p2 = if tri[2] == u || tri[2] == v { target_pt } else { vertices[tri[2]] };
-
-                let v0 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
-                let v1 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
-                let n = [
-                    v0[1] * v1[2] - v0[2] * v1[1],
-                    v0[2] * v1[0] - v0[0] * v1[2],
-                    v0[0] * v1[1] - v0[1] * v1[0],
-                ];
-                let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
-                if len < 1e-14 {
+                // Check that collapsing u/v onto target does not flip or degenerate tri
+                if would_invert_or_degenerate(tri, u, v, target_pt, &vertices) {
                     inversion = true;
                     break;
                 }
             }
         }
 
-        if inversion || shared_faces == 0 {
+        if inversion
+            || shared_faces == 0
+            || (opts.preserve_boundary && (boundary_vertex[u] || boundary_vertex[v]))
+        {
             continue;
         }
 
@@ -345,6 +405,18 @@ pub fn decimate_mesh(mesh: &Mesh, target_faces: usize) -> (Mesh, DecimationStats
     (decimated, stats)
 }
 
+/// Decimates a mesh down to `target_faces` using Quadric Error Metric edge collapse.
+pub fn decimate_mesh(mesh: &Mesh, target_faces: usize) -> (Mesh, DecimationStats) {
+    decimate_with_options(
+        mesh,
+        &DecimateOptions {
+            target_faces,
+            max_error: f64::INFINITY,
+            preserve_boundary: false,
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,6 +459,51 @@ mod tests {
         // Point on plane has 0 error
         let cost_on_plane = q.evaluate([5.0, -2.0, 0.0]);
         assert!(cost_on_plane.abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_collapse_normal_flip_detection() {
+        // Triangle (A,B,C) with A=(0,0,0), B=(1,0,0), C=(0,1,0) has +Z normal.
+        // Collapsing edge (u=B=1, v=D=3) and moving B to the left of the AC line
+        // reverses the winding -> normal flips to -Z.
+        let vertices = vec![
+            [0.0, 0.0, 0.0], // 0: A
+            [1.0, 0.0, 0.0], // 1: B (u)
+            [0.0, 1.0, 0.0], // 2: C
+            [0.0, 0.0, 1.0], // 3: D (v)
+        ];
+        let flip_target = [-0.5, 0.5, 0.0];
+        assert!(would_invert_or_degenerate([0, 1, 2], 1, 3, flip_target, &vertices));
+
+        let ok_target = [0.5, 0.5, 1.0];
+        assert!(!would_invert_or_degenerate([0, 1, 2], 1, 3, ok_target, &vertices));
+    }
+
+    #[test]
+    fn test_decimate_respects_max_error() {
+        let cylinder = Mesh::cylinder(1.0, 2.0, 32, true);
+        let opts = DecimateOptions {
+            target_faces: 1,
+            max_error: f64::NEG_INFINITY, // forbid every collapse
+            preserve_boundary: false,
+        };
+        let (decimated, _) = decimate_with_options(&cylinder, &opts);
+        // A zero error budget forbids every collapse.
+        assert_eq!(decimated.face_count(), cylinder.face_count());
+    }
+
+    #[test]
+    fn test_decimate_preserve_boundary_keeps_boundary_vertices() {
+        // Open cylinder: every vertex lies on a boundary loop.
+        let cylinder = Mesh::cylinder(1.0, 2.0, 16, false);
+        let opts = DecimateOptions {
+            target_faces: 10,
+            max_error: f64::INFINITY,
+            preserve_boundary: true,
+        };
+        let (decimated, _) = decimate_with_options(&cylinder, &opts);
+        // No boundary vertex may be collapsed, so the open cylinder is left intact.
+        assert_eq!(decimated.face_count(), cylinder.face_count());
     }
 }
 

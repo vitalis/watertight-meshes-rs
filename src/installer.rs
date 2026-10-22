@@ -261,15 +261,27 @@ pub fn install_node_packs(comfy_dir: &Path, use_pinned: bool) -> Result<()> {
                 Ok(out) if out.status.success() => {
                     println!("{}", "done".green());
                     if use_pinned {
-                        let _ = Command::new("git")
+                        let checkout = Command::new("git")
                             .current_dir(&target)
                             .args(["checkout", node.pinned_sha])
-                            .output();
+                            .output()?;
+                        if !checkout.status.success() {
+                            return Err(WatertightError::FormatError(format!(
+                                "Failed to checkout pinned commit {} for {}",
+                                node.pinned_sha, node.name
+                            )));
+                        }
                     }
                 }
-                _ => {
-                    println!("{}", "failed (git not available or connection error)".red());
+                Ok(out) => {
+                    return Err(WatertightError::FormatError(format!(
+                        "Failed to clone {} ({}): {}",
+                        node.name,
+                        node.repo_url,
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    )));
                 }
+                Err(e) => return Err(WatertightError::Io(e)),
             }
         }
     }
@@ -320,6 +332,17 @@ pub fn install_workflows(comfy_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Verifies that a download wrote the expected number of bytes (when known).
+fn verify_download_length(filename: &str, total: u64, content_len: u64) -> Result<()> {
+    if content_len > 0 && total != content_len {
+        Err(WatertightError::DownloadError(format!(
+            "Download of {filename} truncated: expected {content_len} bytes, got {total}"
+        )))
+    } else {
+        Ok(())
+    }
+}
+
 /// Download a model checkpoint with progress bar
 pub fn download_model(target_dir: &Path, file: &ModelFile) -> Result<()> {
     let out_dir = target_dir.join(file.subfolder);
@@ -357,6 +380,7 @@ pub fn download_model(target_dir: &Path, file: &ModelFile) -> Result<()> {
     let mut out_file = File::create(&part_path)?;
     let mut reader = resp.body_mut().as_reader();
     let mut buffer = [0u8; 65536];
+    let mut total = 0u64;
 
     loop {
         let n = reader.read(&mut buffer)?;
@@ -365,6 +389,13 @@ pub fn download_model(target_dir: &Path, file: &ModelFile) -> Result<()> {
         }
         out_file.write_all(&buffer[..n])?;
         pb.inc(n as u64);
+        total += n as u64;
+    }
+
+    if let Err(e) = verify_download_length(file.filename, total, content_len) {
+        drop(out_file);
+        let _ = fs::remove_file(&part_path);
+        return Err(e);
     }
 
     pb.finish_with_message("downloaded");
@@ -422,6 +453,14 @@ mod tests {
         assert!(detected.is_some());
 
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_download_length_verification() {
+        assert!(verify_download_length("a", 100, 100).is_ok());
+        assert!(verify_download_length("a", 100, 0).is_ok(), "unknown length is allowed");
+        assert!(verify_download_length("a", 99, 100).is_err(), "truncated download rejected");
+        assert!(verify_download_length("a", 101, 100).is_err(), "overshoot rejected");
     }
 }
 

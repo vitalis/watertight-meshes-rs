@@ -8,9 +8,9 @@ use colored::*;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use watertight::{
-    analyze_topology, audit_comfyui, auto_repair, decimate_mesh, detect_comfyui_dir,
+    analyze_topology, audit_comfyui, auto_repair, decimate_with_options, detect_comfyui_dir,
     detect_hardware, export_all_workflows, get_all_workflows, install_node_packs,
-    install_workflows, voxelize_and_remesh, Mesh, RepairConfig,
+    install_workflows, voxelize_and_remesh, DecimateOptions, Mesh, RepairConfig,
     VoxelRemeshOptions,
 };
 
@@ -246,6 +246,7 @@ fn run_remesh(args: RemeshArgs) -> Result<(), Box<dyn std::error::Error>> {
         resolution: args.resolution,
         padding: args.padding as f64 * 0.01,
         iso_level: 0.5,
+        keep_cavities: args.keep_cavities,
     };
 
     let remeshed = voxelize_and_remesh(&mesh, &opts)?;
@@ -273,7 +274,12 @@ fn run_decimate(args: DecimateArgs) -> Result<(), Box<dyn std::error::Error>> {
         args.faces
     );
 
-    let (decimated, report) = decimate_mesh(&mesh, args.faces);
+    let opts = DecimateOptions {
+        target_faces: args.faces,
+        max_error: args.max_error as f64,
+        preserve_boundary: true,
+    };
+    let (decimated, report) = decimate_with_options(&mesh, &opts);
     println!(
         "    Decimated: {} vertices, {} faces (reduced by {:.1}%)",
         decimated.vertex_count(),

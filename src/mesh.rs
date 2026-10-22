@@ -138,9 +138,13 @@ impl Mesh {
         self.faces
             .iter()
             .map(|&[i0, i1, i2]| {
-                let p0 = self.vertices[i0];
-                let p1 = self.vertices[i1];
-                let p2 = self.vertices[i2];
+                let (Some(&p0), Some(&p1), Some(&p2)) = (
+                    self.vertices.get(i0),
+                    self.vertices.get(i1),
+                    self.vertices.get(i2),
+                ) else {
+                    return [0.0, 0.0, 1.0];
+                };
                 let v0 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
                 let v1 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
                 let n = [
@@ -166,9 +170,11 @@ impl Mesh {
         for (idx, &[i0, i1, i2]) in self.faces.iter().enumerate() {
             let fn_norm = face_normals[idx];
             for &vi in &[i0, i1, i2] {
-                normals[vi][0] += fn_norm[0];
-                normals[vi][1] += fn_norm[1];
-                normals[vi][2] += fn_norm[2];
+                if let Some(n) = normals.get_mut(vi) {
+                    n[0] += fn_norm[0];
+                    n[1] += fn_norm[1];
+                    n[2] += fn_norm[2];
+                }
             }
         }
 
@@ -255,19 +261,31 @@ impl Mesh {
                 let parts: Vec<&str> = trimmed.split_whitespace().collect();
                 if parts.len() >= 4 {
                     let mut face_v = Vec::new();
+                    let mut valid = true;
                     for part in &parts[1..] {
                         let v_str = part.split('/').next().unwrap_or("");
-                        if let Ok(v_idx) = v_str.parse::<isize>() {
-                            let idx = if v_idx > 0 {
-                                (v_idx - 1) as usize
-                            } else {
-                                (vertices.len() as isize + v_idx) as usize
-                            };
-                            face_v.push(idx);
+                        match v_str.parse::<isize>() {
+                            Ok(v_idx) => {
+                                let idx = if v_idx > 0 {
+                                    (v_idx - 1) as usize
+                                } else {
+                                    (vertices.len() as isize + v_idx) as usize
+                                };
+                                if idx < vertices.len() {
+                                    face_v.push(idx);
+                                } else {
+                                    valid = false;
+                                    break;
+                                }
+                            }
+                            Err(_) => {
+                                valid = false;
+                                break;
+                            }
                         }
                     }
                     // Fan triangulation for polygons
-                    if face_v.len() >= 3 {
+                    if valid && face_v.len() >= 3 {
                         for k in 1..face_v.len() - 1 {
                             faces.push([face_v[0], face_v[k], face_v[k + 1]]);
                         }
@@ -479,10 +497,22 @@ impl Mesh {
             if parts.len() >= 4 {
                 let count: usize = parts[0].parse().unwrap_or(0);
                 if count >= 3 && parts.len() > count {
-                    let v0: usize = parts[1].parse().unwrap_or(0);
-                    let v1: usize = parts[2].parse().unwrap_or(0);
-                    let v2: usize = parts[3].parse().unwrap_or(0);
-                    faces.push([v0, v1, v2]);
+                    let mut idxs = Vec::with_capacity(count);
+                    let mut valid = true;
+                    for part in &parts[1..=count] {
+                        let vi: usize = part.parse().unwrap_or(usize::MAX);
+                        if vi < vertices.len() {
+                            idxs.push(vi);
+                        } else {
+                            valid = false;
+                            break;
+                        }
+                    }
+                    if valid {
+                        for k in 1..idxs.len() - 1 {
+                            faces.push([idxs[0], idxs[k], idxs[k + 1]]);
+                        }
+                    }
                 }
             }
         }
@@ -709,6 +739,40 @@ mod tests {
         assert_eq!(loaded.face_count(), original.face_count());
 
         let _ = fs::remove_file(temp_path);
+    }
+
+    #[test]
+    fn test_obj_out_of_range_face_index_does_not_panic() {
+        // Face references vertex 999 which does not exist
+        let data = b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 999\n";
+        let reader = std::io::BufReader::new(std::io::Cursor::new(&data[..]));
+        let mesh = Mesh::from_obj(reader).expect("must not panic on out-of-range index");
+        assert_eq!(mesh.face_count(), 0, "invalid face must be skipped");
+    }
+
+    #[test]
+    fn test_obj_negative_face_index_does_not_panic() {
+        let data = b"v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 -999\n";
+        let reader = std::io::BufReader::new(std::io::Cursor::new(&data[..]));
+        let mesh = Mesh::from_obj(reader).expect("must not panic on out-of-range negative index");
+        assert_eq!(mesh.face_count(), 0);
+    }
+
+    #[test]
+    fn test_ply_out_of_range_face_index_does_not_panic() {
+        let data = b"ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1 99\n";
+        let reader = std::io::BufReader::new(std::io::Cursor::new(&data[..]));
+        let mesh = Mesh::from_ply(reader).expect("must not panic on out-of-range index");
+        assert_eq!(mesh.face_count(), 0);
+    }
+
+    #[test]
+    fn test_ply_quad_face_is_triangulated() {
+        // A quad face (4 vertices) must fan-triangulate into 2 triangles.
+        let data = b"ply\nformat ascii 1.0\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n1 1 0\n0 1 0\n4 0 1 2 3\n";
+        let reader = std::io::BufReader::new(std::io::Cursor::new(&data[..]));
+        let mesh = Mesh::from_ply(reader).expect("parse quad");
+        assert_eq!(mesh.face_count(), 2, "quad must fan-triangulate into 2 triangles");
     }
 }
 

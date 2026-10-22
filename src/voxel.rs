@@ -17,6 +17,8 @@ pub struct VoxelRemeshOptions {
     pub padding: f64,
     /// Iso-value threshold for surface extraction (default: 0.5)
     pub iso_level: f64,
+    /// Preserve internal cavities and floating shells instead of filling them solid
+    pub keep_cavities: bool,
 }
 
 impl Default for VoxelRemeshOptions {
@@ -25,22 +27,35 @@ impl Default for VoxelRemeshOptions {
             resolution: 128,
             padding: 0.05,
             iso_level: 0.5,
+            keep_cavities: false,
         }
     }
 }
 
 /// Convenience wrapper returning `Result<Mesh>`
 pub fn voxelize_and_remesh(mesh: &Mesh, opts: &VoxelRemeshOptions) -> Result<Mesh> {
+    if mesh.is_empty() {
+        return Ok(mesh.clone());
+    }
+
+    let (_, _, nx, ny, nz) = grid_layout(mesh, opts);
+    // occupancy (bool) + is_exterior (bool) + field (f32) ~= 6 bytes/cell
+    if let Some(cells) = nx.checked_mul(ny).and_then(|v| v.checked_mul(nz)) {
+        const MAX_VOXEL_CELLS: usize = 1 << 27; // ~134M cells ≈ 800 MB of working memory
+        if cells > MAX_VOXEL_CELLS {
+            return Err(crate::error::WatertightError::TopologyError(format!(
+                "Voxel resolution {} would allocate {cells} grid cells (~{} MB); lower --resolution (512 or less recommended)",
+                opts.resolution,
+                cells.saturating_mul(6) / (1024 * 1024)
+            )));
+        }
+    }
+
     Ok(voxel_remesh(mesh, *opts))
 }
 
-/// Converts a messy, non-manifold, or multi-shelled mesh into a guaranteed
-/// 100% watertight 2-manifold mesh via voxelization, flood-fill, and Marching Cubes.
-pub fn voxel_remesh(mesh: &Mesh, opts: VoxelRemeshOptions) -> Mesh {
-    if mesh.is_empty() {
-        return mesh.clone();
-    }
-
+/// Computes the voxel grid origin, cell size, and per-axis cell counts.
+fn grid_layout(mesh: &Mesh, opts: &VoxelRemeshOptions) -> ([f64; 3], f64, usize, usize, usize) {
     let aabb = mesh.bounding_box();
     let extent = aabb.max_extent();
     let pad = extent * opts.padding;
@@ -67,6 +82,19 @@ pub fn voxel_remesh(mesh: &Mesh, opts: VoxelRemeshOptions) -> Mesh {
     let nx = ((max_bound[0] - origin[0]) * inv_cell).ceil() as usize + 2;
     let ny = ((max_bound[1] - origin[1]) * inv_cell).ceil() as usize + 2;
     let nz = ((max_bound[2] - origin[2]) * inv_cell).ceil() as usize + 2;
+
+    (origin, cell_size, nx, ny, nz)
+}
+
+/// Converts a messy, non-manifold, or multi-shelled mesh into a guaranteed
+/// 100% watertight 2-manifold mesh via voxelization, flood-fill, and Marching Cubes.
+pub fn voxel_remesh(mesh: &Mesh, opts: VoxelRemeshOptions) -> Mesh {
+    if mesh.is_empty() {
+        return mesh.clone();
+    }
+
+    let (origin, cell_size, nx, ny, nz) = grid_layout(mesh, &opts);
+    let inv_cell = 1.0 / cell_size;
 
     let grid_size = nx * ny * nz;
     let mut occupancy = vec![false; grid_size];
@@ -181,10 +209,15 @@ pub fn voxel_remesh(mesh: &Mesh, opts: VoxelRemeshOptions) -> Mesh {
         }
     }
 
-    // Solid field: 1.0 for interior/surface, 0.0 for exterior air
+    // Solid field: 1.0 for solid, 0.0 for empty. Default fills enclosed interior
+    // (cavities); keep_cavities leaves them hollow by marking only surface cells solid.
     let mut field = vec![0.0f32; grid_size];
     for i in 0..grid_size {
-        if !is_exterior[i] {
+        if opts.keep_cavities {
+            if occupancy[i] {
+                field[i] = 1.0;
+            }
+        } else if !is_exterior[i] {
             field[i] = 1.0;
         }
     }
@@ -609,6 +642,7 @@ mod tests {
                 resolution: 32,
                 padding: 0.1,
                 iso_level: 0.5,
+                keep_cavities: false,
             },
         );
 
@@ -630,6 +664,7 @@ mod tests {
                 resolution: 24,
                 padding: 0.1,
                 iso_level: 0.5,
+                keep_cavities: false,
             },
         );
         let rep = analyze_topology(&remeshed);
@@ -643,6 +678,61 @@ mod tests {
         let empty = Mesh::new(Vec::new(), Vec::new());
         let remeshed = voxel_remesh(&empty, VoxelRemeshOptions::default());
         assert!(remeshed.is_empty());
+    }
+
+    #[test]
+    fn test_voxel_remesh_rejects_excessive_resolution() {
+        let cube = Mesh::cube(1.0);
+        let opts = VoxelRemeshOptions {
+            resolution: 100_000,
+            padding: 0.05,
+            iso_level: 0.5,
+            keep_cavities: false,
+        };
+        let result = voxelize_and_remesh(&cube, &opts);
+        assert!(result.is_err(), "absurd resolution must error before allocating");
+    }
+
+    fn nested_cubes() -> Mesh {
+        let outer = Mesh::cube(2.0);
+        let inner = Mesh::cube(0.6);
+        let mut vertices = outer.vertices.clone();
+        vertices.extend(inner.vertices.clone());
+        let offset = outer.vertices.len();
+        let mut faces = outer.faces.clone();
+        for f in &inner.faces {
+            faces.push([f[0] + offset, f[1] + offset, f[2] + offset]);
+        }
+        Mesh::new(vertices, faces)
+    }
+
+    #[test]
+    fn test_voxel_remesh_keep_cavities_preserves_inner_shell() {
+        let mesh = nested_cubes();
+        let fill_opts = VoxelRemeshOptions {
+            resolution: 64,
+            padding: 0.05,
+            iso_level: 0.5,
+            keep_cavities: false,
+        };
+        let filled = voxel_remesh(&mesh, fill_opts);
+        assert_eq!(
+            analyze_topology(&filled).euler_characteristic,
+            2,
+            "default fill mode absorbs the floating inner shell"
+        );
+
+        let keep_opts = VoxelRemeshOptions {
+            resolution: 64,
+            padding: 0.05,
+            iso_level: 0.5,
+            keep_cavities: true,
+        };
+        let hollow = voxel_remesh(&mesh, keep_opts);
+        assert!(
+            hollow.face_count() > filled.face_count(),
+            "keep_cavities must preserve the inner shell"
+        );
     }
 }
 

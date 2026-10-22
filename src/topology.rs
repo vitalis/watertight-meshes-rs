@@ -39,6 +39,8 @@ impl MeshHealthReport {
 
         let status_str = if self.is_watertight {
             "✅ 100% WATERTIGHT (Clean 2-Manifold • 3D Printable • Game Ready)"
+        } else if self.is_manifold && self.is_closed {
+            "⚠️ CLOSED but NON-SOLID (2-manifold, zero or negative enclosed volume)"
         } else if self.is_manifold {
             "⚠️ OPEN MESH (Manifold, but contains boundary holes/gaps)"
         } else {
@@ -140,11 +142,16 @@ pub fn analyze_topology(mesh: &Mesh) -> MeshHealthReport {
     // Directed edges for boundary loops: u -> v
     let mut directed_edges: HashMap<(usize, usize), usize> = HashMap::new();
     let mut degenerate_faces = 0;
+    let mut valid_face_count = 0usize;
+    let mut valid_vertices: HashSet<usize> = HashSet::new();
 
     for (f_idx, &[i0, i1, i2]) in mesh.faces.iter().enumerate() {
-        // Degenerate triangle check: duplicate vertex indices or zero cross-product area
+        // Degenerate triangle check: out-of-range, duplicate vertex indices, or zero area
+        let out_of_range = i0 >= mesh.vertices.len()
+            || i1 >= mesh.vertices.len()
+            || i2 >= mesh.vertices.len();
         let is_idx_degenerate = i0 == i1 || i1 == i2 || i0 == i2;
-        let is_area_degenerate = if !is_idx_degenerate && i0 < mesh.vertices.len() && i1 < mesh.vertices.len() && i2 < mesh.vertices.len() {
+        let is_area_degenerate = if !out_of_range && !is_idx_degenerate {
             let p0 = mesh.vertices[i0];
             let p1 = mesh.vertices[i1];
             let p2 = mesh.vertices[i2];
@@ -160,10 +167,15 @@ pub fn analyze_topology(mesh: &Mesh) -> MeshHealthReport {
             false
         };
 
-        if is_idx_degenerate || is_area_degenerate {
+        if out_of_range || is_idx_degenerate || is_area_degenerate {
             degenerate_faces += 1;
             continue;
         }
+
+        valid_face_count += 1;
+        valid_vertices.insert(i0);
+        valid_vertices.insert(i1);
+        valid_vertices.insert(i2);
 
         let edges = [(i0, i1), (i1, i2), (i2, i0)];
         for &(u, v) in &edges {
@@ -198,6 +210,9 @@ pub fn analyze_topology(mesh: &Mesh) -> MeshHealthReport {
     let mut signed_volume = 0.0;
 
     for &[i0, i1, i2] in &mesh.faces {
+        if i0 >= mesh.vertices.len() || i1 >= mesh.vertices.len() || i2 >= mesh.vertices.len() {
+            continue;
+        }
         let p0 = mesh.vertices[i0];
         let p1 = mesh.vertices[i1];
         let p2 = mesh.vertices[i2];
@@ -222,7 +237,8 @@ pub fn analyze_topology(mesh: &Mesh) -> MeshHealthReport {
 
     let vertex_count = mesh.vertices.len();
     let face_count = mesh.faces.len();
-    let euler = (vertex_count as i64) - (edge_count as i64) + (face_count as i64);
+    // Euler characteristic is only meaningful over the valid (non-degenerate) complex.
+    let euler = (valid_vertices.len() as i64) - (edge_count as i64) + (valid_face_count as i64);
 
     let is_closed = boundary_edges.is_empty();
     let is_manifold = non_manifold_edges == 0 && non_manifold_vertices == 0;
@@ -230,7 +246,7 @@ pub fn analyze_topology(mesh: &Mesh) -> MeshHealthReport {
     let is_3d_printable = is_watertight;
 
     // Genus g is well-defined for closed orientable surfaces: chi = 2 - 2g => g = (2 - chi) / 2
-    let genus = if is_closed && is_manifold && euler % 2 == 0 {
+    let genus = if is_closed && is_manifold && degenerate_faces == 0 && euler % 2 == 0 {
         Some((2 - euler) / 2)
     } else {
         None
@@ -480,6 +496,40 @@ mod tests {
         let mesh = Mesh::new(verts, faces);
         let report = analyze_topology(&mesh);
         assert_eq!(report.degenerate_face_count, 1);
+    }
+
+    #[test]
+    fn test_out_of_range_face_index_does_not_panic() {
+        let verts = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        let faces = vec![[0, 1, 99]]; // index 99 out of range
+        let mesh = Mesh::new(verts, faces);
+        let report = analyze_topology(&mesh);
+        assert_eq!(report.degenerate_face_count, 1, "invalid face counted as degenerate");
+    }
+
+    #[test]
+    fn test_euler_characteristic_excludes_degenerate_faces() {
+        // Three collinear vertices form one degenerate face: no valid complex.
+        let verts = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+        let faces = vec![[0, 1, 2]];
+        let mesh = Mesh::new(verts, faces);
+        let report = analyze_topology(&mesh);
+        assert_eq!(report.euler_characteristic, 0);
+        assert_eq!(report.genus, None, "genus is undefined for degenerate meshes");
+    }
+
+    #[test]
+    fn test_status_not_mislabeled_for_negative_volume_mesh() {
+        let mut cube = Mesh::cube(1.0);
+        for f in &mut cube.faces {
+            f.swap(0, 1); // invert winding -> closed, manifold, but negative volume
+        }
+        let report = analyze_topology(&cube);
+        assert!(report.is_closed && report.is_manifold && !report.is_watertight);
+        let diag = report.format_diagnostic();
+        // A closed-but-non-solid mesh must not claim to contain boundary holes.
+        assert!(!diag.contains("boundary holes"));
+        assert!(diag.contains("NON-SOLID"));
     }
 }
 
