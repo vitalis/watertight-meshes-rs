@@ -131,7 +131,19 @@ pub fn voxel_remesh(mesh: &Mesh, opts: VoxelRemeshOptions) -> Mesh {
         for z in gz0..=gz1 {
             for y in gy0..=gy1 {
                 for x in gx0..=gx1 {
-                    occupancy[idx_of(x, y, z)] = true;
+                    let cell_min = [
+                        origin[0] + (x as f64) * cell_size,
+                        origin[1] + (y as f64) * cell_size,
+                        origin[2] + (z as f64) * cell_size,
+                    ];
+                    let cell_max = [
+                        cell_min[0] + cell_size,
+                        cell_min[1] + cell_size,
+                        cell_min[2] + cell_size,
+                    ];
+                    if triangle_box_intersects(p0, p1, p2, cell_min, cell_max) {
+                        occupancy[idx_of(x, y, z)] = true;
+                    }
                 }
             }
         }
@@ -237,6 +249,92 @@ pub fn voxel_remesh(mesh: &Mesh, opts: VoxelRemeshOptions) -> Mesh {
 // -----------------------------------------------------------------
 // Marching Cubes Implementation with Standard Lookup Tables
 // -----------------------------------------------------------------
+
+/// Returns true if triangle (v0, v1, v2) intersects the axis-aligned box [box_min, box_max].
+///
+/// Separating-axis test (Akenine-Möller): the triangle and box are disjoint iff
+/// their projections onto one of the 13 candidate axes are disjoint.
+fn triangle_box_intersects(
+    v0: [f64; 3],
+    v1: [f64; 3],
+    v2: [f64; 3],
+    box_min: [f64; 3],
+    box_max: [f64; 3],
+) -> bool {
+    // Translate to the box center; half-extents.
+    let c = [
+        (box_min[0] + box_max[0]) * 0.5,
+        (box_min[1] + box_max[1]) * 0.5,
+        (box_min[2] + box_max[2]) * 0.5,
+    ];
+    let h = [
+        (box_max[0] - box_min[0]) * 0.5,
+        (box_max[1] - box_min[1]) * 0.5,
+        (box_max[2] - box_min[2]) * 0.5,
+    ];
+    let v0 = [v0[0] - c[0], v0[1] - c[1], v0[2] - c[2]];
+    let v1 = [v1[0] - c[0], v1[1] - c[1], v1[2] - c[2]];
+    let v2 = [v2[0] - c[0], v2[1] - c[1], v2[2] - c[2]];
+
+    let e0 = [v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]];
+    let e1 = [v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2]];
+    let e2 = [v0[0] - v2[0], v0[1] - v2[1], v0[2] - v2[2]];
+
+    // 9 axes from cross(edge, box-face-normal).
+    let axes: [[f64; 3]; 9] = [
+        [0.0, -e0[2], e0[1]],
+        [e0[2], 0.0, -e0[0]],
+        [-e0[1], e0[0], 0.0],
+        [0.0, -e1[2], e1[1]],
+        [e1[2], 0.0, -e1[0]],
+        [-e1[1], e1[0], 0.0],
+        [0.0, -e2[2], e2[1]],
+        [e2[2], 0.0, -e2[0]],
+        [-e2[1], e2[0], 0.0],
+    ];
+    for a in &axes {
+        let p0 = v0[0] * a[0] + v0[1] * a[1] + v0[2] * a[2];
+        let p1 = v1[0] * a[0] + v1[1] * a[1] + v1[2] * a[2];
+        let p2 = v2[0] * a[0] + v2[1] * a[1] + v2[2] * a[2];
+        let r = h[0] * a[0].abs() + h[1] * a[1].abs() + h[2] * a[2].abs();
+        let minp = p0.min(p1).min(p2);
+        let maxp = p0.max(p1).max(p2);
+        if minp > r || maxp < -r {
+            return false;
+        }
+    }
+
+    // Triangle face normal.
+    let n = [
+        e0[1] * e1[2] - e0[2] * e1[1],
+        e0[2] * e1[0] - e0[0] * e1[2],
+        e0[0] * e1[1] - e0[1] * e1[0],
+    ];
+    let r = h[0] * n[0].abs() + h[1] * n[1].abs() + h[2] * n[2].abs();
+    let d = v0[0] * n[0] + v0[1] * n[1] + v0[2] * n[2];
+    if d > r || d < -r {
+        return false;
+    }
+
+    // Box face normals (x, y, z): triangle AABB vs box half-extent.
+    let minx = v0[0].min(v1[0]).min(v2[0]);
+    let maxx = v0[0].max(v1[0]).max(v2[0]);
+    if minx > h[0] || maxx < -h[0] {
+        return false;
+    }
+    let miny = v0[1].min(v1[1]).min(v2[1]);
+    let maxy = v0[1].max(v1[1]).max(v2[1]);
+    if miny > h[1] || maxy < -h[1] {
+        return false;
+    }
+    let minz = v0[2].min(v1[2]).min(v2[2]);
+    let maxz = v0[2].max(v1[2]).max(v2[2]);
+    if minz > h[2] || maxz < -h[2] {
+        return false;
+    }
+
+    true
+}
 
 fn marching_cubes(
     field: &[f32],
@@ -733,6 +831,22 @@ mod tests {
             hollow.face_count() > filled.face_count(),
             "keep_cavities must preserve the inner shell"
         );
+    }
+
+    #[test]
+    fn test_triangle_box_intersection() {
+        // Triangle in the z = 0 plane covering {x >= 0, y >= 0, x + y <= 1}.
+        let v0 = [0.0, 0.0, 0.0];
+        let v1 = [1.0, 0.0, 0.0];
+        let v2 = [0.0, 1.0, 0.0];
+        // Inside the triangle.
+        assert!(triangle_box_intersects(v0, v1, v2, [0.1, 0.1, -0.1], [0.4, 0.4, 0.1]));
+        // Far away.
+        assert!(!triangle_box_intersects(v0, v1, v2, [2.0, 2.0, -0.1], [3.0, 3.0, 0.1]));
+        // Within the AABB but outside the triangle (x + y > 1): the fidelity case.
+        assert!(!triangle_box_intersects(v0, v1, v2, [0.7, 0.7, -0.1], [0.9, 0.9, 0.1]));
+        // Offset out of the plane.
+        assert!(!triangle_box_intersects(v0, v1, v2, [0.1, 0.1, 0.5], [0.4, 0.4, 1.0]));
     }
 }
 
