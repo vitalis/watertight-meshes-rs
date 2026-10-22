@@ -65,7 +65,6 @@ struct EdgeCollapseCandidate {
     cost: f64,
     v0: usize,
     v1: usize,
-    target: [f64; 3],
 }
 
 impl PartialEq for EdgeCollapseCandidate {
@@ -275,19 +274,12 @@ pub fn decimate_with_options(mesh: &Mesh, opts: &DecimateOptions) -> (Mesh, Deci
                 let cost_u = q_sum.evaluate(p_u);
                 let cost_v = q_sum.evaluate(p_v);
 
-                let (best_target, min_cost) = if cost_mid <= cost_u && cost_mid <= cost_v {
-                    (midpoint, cost_mid)
-                } else if cost_u <= cost_v {
-                    (p_u, cost_u)
-                } else {
-                    (p_v, cost_v)
-                };
+                let min_cost = cost_mid.min(cost_u).min(cost_v);
 
                 heap.push(EdgeCollapseCandidate {
                     cost: min_cost,
                     v0: u,
                     v1: v,
-                    target: best_target,
                 });
             }
         }
@@ -305,19 +297,50 @@ pub fn decimate_with_options(mesh: &Mesh, opts: &DecimateOptions) -> (Mesh, Deci
         let u = candidate.v0;
         let v = candidate.v1;
 
-        if candidate.cost > opts.max_error {
-            // Heap is min-ordered: every remaining candidate is at least this costly.
-            break;
-        }
-
         if !vertex_alive[u] || !vertex_alive[v] {
             continue;
+        }
+
+        // Lazy re-keying: re-solve the collapse cost and optimal target from the
+        // current positions and quadrics, since prior collapses accumulate quadrics
+        // onto u and move vertices (making the heap entry's stored cost stale).
+        let q_sum = vertex_quadrics[u].add(&vertex_quadrics[v]);
+        let p_u = vertices[u];
+        let p_v = vertices[v];
+        let midpoint = [
+            (p_u[0] + p_v[0]) * 0.5,
+            (p_u[1] + p_v[1]) * 0.5,
+            (p_u[2] + p_v[2]) * 0.5,
+        ];
+        let cost_mid = q_sum.evaluate(midpoint);
+        let cost_u = q_sum.evaluate(p_u);
+        let cost_v = q_sum.evaluate(p_v);
+        let (target_pt, min_cost) = if cost_mid <= cost_u && cost_mid <= cost_v {
+            (midpoint, cost_mid)
+        } else if cost_u <= cost_v {
+            (p_u, cost_u)
+        } else {
+            (p_v, cost_v)
+        };
+
+        if min_cost > candidate.cost + 1e-9 {
+            // Stale entry: re-insert with the up-to-date cost and re-evaluate later.
+            heap.push(EdgeCollapseCandidate {
+                cost: min_cost,
+                v0: u,
+                v1: v,
+            });
+            continue;
+        }
+
+        if min_cost > opts.max_error {
+            // Heap is min-ordered: every remaining candidate is at least this costly.
+            break;
         }
 
         // Check if collapsing u and v causes triangle normal inversion
         let faces_u = vertex_to_faces[u].clone();
         let faces_v = vertex_to_faces[v].clone();
-        let target_pt = candidate.target;
 
         let mut inversion = false;
         let mut shared_faces = 0;
@@ -504,6 +527,20 @@ mod tests {
         let (decimated, _) = decimate_with_options(&cylinder, &opts);
         // No boundary vertex may be collapsed, so the open cylinder is left intact.
         assert_eq!(decimated.face_count(), cylinder.face_count());
+    }
+
+    #[test]
+    fn test_decimate_rekeying_terminates() {
+        // A high-segment mesh exercises many collapses and re-keying passes.
+        let cylinder = Mesh::cylinder(1.0, 2.0, 64, true);
+        let opts = DecimateOptions {
+            target_faces: 120,
+            max_error: f64::INFINITY,
+            preserve_boundary: false,
+        };
+        let (decimated, stats) = decimate_with_options(&cylinder, &opts);
+        assert!(decimated.face_count() <= 120);
+        assert_eq!(stats.final_faces, decimated.face_count());
     }
 }
 
