@@ -192,7 +192,7 @@ impl Mesh {
         self.normals = normals;
     }
 
-    /// Load mesh from file (.obj, .stl, .ply)
+    /// Load mesh from file (.obj, .stl, .ply, .glb)
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         let ext = path
@@ -200,6 +200,11 @@ impl Mesh {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_lowercase();
+
+        if ext == "glb" || ext == "gltf" {
+            let data = std::fs::read(path)?;
+            return Self::from_glb(&data);
+        }
 
         let file = File::open(path)?;
         let reader = BufReader::new(file);
@@ -215,7 +220,7 @@ impl Mesh {
         }
     }
 
-    /// Save mesh to file (.obj, .stl, .ply)
+    /// Save mesh to file (.obj, .stl, .ply, .glb)
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let path = path.as_ref();
         let ext = path
@@ -231,6 +236,11 @@ impl Mesh {
             "obj" => self.to_obj(&mut writer),
             "stl" => self.to_stl_binary(&mut writer),
             "ply" => self.to_ply(&mut writer),
+            "glb" => {
+                let bytes = self.to_glb()?;
+                writer.write_all(&bytes)?;
+                Ok(())
+            }
             other => Err(WatertightError::UnsupportedFormat(format!(
                 "Unsupported file extension: .{}",
                 other
@@ -543,6 +553,147 @@ impl Mesh {
     }
 
     // -------------------------------------------------------------
+    // GLB (binary glTF) I/O
+    // -------------------------------------------------------------
+
+    /// Load a GLB (binary glTF) mesh, merging all mesh primitives.
+    pub fn from_glb(data: &[u8]) -> Result<Self> {
+        let gltf = gltf::Gltf::from_slice(data)
+            .map_err(|e| WatertightError::FormatError(format!("Invalid GLB: {e}")))?;
+        let blob: &[u8] = gltf.blob.as_deref().unwrap_or(&[]);
+
+        let mut vertices: Vec<[f64; 3]> = Vec::new();
+        let mut faces: Vec<[usize; 3]> = Vec::new();
+
+        for mesh in gltf.document.meshes() {
+            for primitive in mesh.primitives() {
+                if primitive.mode() != gltf::mesh::Mode::Triangles {
+                    return Err(WatertightError::FormatError(format!(
+                        "Unsupported primitive mode: {:?}",
+                        primitive.mode()
+                    )));
+                }
+
+                let reader = primitive.reader(|_buffer| Some(blob));
+                let positions: Vec<[f32; 3]> = reader
+                    .read_positions()
+                    .ok_or_else(|| {
+                        WatertightError::FormatError("GLB primitive missing POSITION".into())
+                    })?
+                    .collect();
+                let base = vertices.len();
+                vertices.extend(positions.iter().map(|p| {
+                    [p[0] as f64, p[1] as f64, p[2] as f64]
+                }));
+
+                if let Some(indices) = reader.read_indices() {
+                    let idx: Vec<u32> = match indices {
+                        gltf::mesh::util::ReadIndices::U8(it) => it.map(|i| i as u32).collect(),
+                        gltf::mesh::util::ReadIndices::U16(it) => it.map(|i| i as u32).collect(),
+                        gltf::mesh::util::ReadIndices::U32(it) => it.collect(),
+                    };
+                    for tri in idx.chunks(3) {
+                        if tri.len() == 3 {
+                            faces.push([
+                                base + tri[0] as usize,
+                                base + tri[1] as usize,
+                                base + tri[2] as usize,
+                            ]);
+                        }
+                    }
+                } else {
+                    // Non-indexed primitive: positions are sequential triangles.
+                    for i in (0..positions.len()).step_by(3) {
+                        if i + 2 < positions.len() {
+                            faces.push([base + i, base + i + 1, base + i + 2]);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(Mesh::new(vertices, faces))
+    }
+
+    /// Serialize the mesh to a GLB (binary glTF) byte buffer.
+    pub fn to_glb(&self) -> Result<Vec<u8>> {
+        // Pack positions (f32 x3) then indices (u32 x3) into the binary chunk.
+        let mut bin = Vec::with_capacity(self.vertices.len() * 12 + self.faces.len() * 12);
+        let mut min = [f64::INFINITY; 3];
+        let mut max = [f64::NEG_INFINITY; 3];
+        for v in &self.vertices {
+            bin.extend_from_slice(&(v[0] as f32).to_le_bytes());
+            bin.extend_from_slice(&(v[1] as f32).to_le_bytes());
+            bin.extend_from_slice(&(v[2] as f32).to_le_bytes());
+            for k in 0..3 {
+                min[k] = min[k].min(v[k]);
+                max[k] = max[k].max(v[k]);
+            }
+        }
+        let pos_bytes = self.vertices.len() * 12;
+        for f in &self.faces {
+            for &idx in f {
+                bin.extend_from_slice(&(idx as u32).to_le_bytes());
+            }
+        }
+        let idx_bytes = self.faces.len() * 12;
+
+        let mut position_accessor = serde_json::json!({
+            "bufferView": 0,
+            "componentType": 5126,
+            "count": self.vertices.len(),
+            "type": "VEC3"
+        });
+        if !self.vertices.is_empty() {
+            position_accessor["min"] = serde_json::json!([min[0], min[1], min[2]]);
+            position_accessor["max"] = serde_json::json!([max[0], max[1], max[2]]);
+        }
+
+        let json = serde_json::json!({
+            "asset": {"version": "2.0"},
+            "scene": 0,
+            "scenes": [{"nodes": [0]}],
+            "nodes": [{"mesh": 0}],
+            "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "mode": 4}]}],
+            "buffers": [{"byteLength": bin.len()}],
+            "bufferViews": [
+                {"buffer": 0, "byteOffset": 0, "byteLength": pos_bytes, "target": 34962},
+                {"buffer": 0, "byteOffset": pos_bytes, "byteLength": idx_bytes, "target": 34963}
+            ],
+            "accessors": [
+                position_accessor,
+                {"bufferView": 1, "componentType": 5125, "count": self.faces.len() * 3, "type": "SCALAR"}
+            ]
+        });
+
+        let json_bytes = serde_json::to_vec(&json)?;
+
+        // Assemble the GLB container: header + JSON chunk + BIN chunk.
+        let json_padded = (json_bytes.len() + 3) & !3;
+        let bin_padded = (bin.len() + 3) & !3;
+        let total = 12 + 8 + json_padded + 8 + bin_padded;
+
+        let mut out = Vec::with_capacity(total);
+        out.extend_from_slice(&0x4654_6C67u32.to_le_bytes()); // "glTF"
+        out.extend_from_slice(&2u32.to_le_bytes()); // version 2
+        out.extend_from_slice(&(total as u32).to_le_bytes());
+        out.extend_from_slice(&(json_padded as u32).to_le_bytes());
+        out.extend_from_slice(&0x4E4F_534Au32.to_le_bytes()); // "JSON"
+        out.extend_from_slice(&json_bytes);
+        while out.len() % 4 != 0 {
+            out.push(0x20);
+        }
+        out.extend_from_slice(&(bin_padded as u32).to_le_bytes());
+        out.extend_from_slice(&0x004E_4942u32.to_le_bytes()); // "BIN\0"
+        out.extend_from_slice(&bin);
+        while out.len() % 4 != 0 {
+            out.push(0x00);
+        }
+
+        Ok(out)
+    }
+
+    // -------------------------------------------------------------
     // Primitives for testing & verification
     // -------------------------------------------------------------
 
@@ -773,6 +924,20 @@ mod tests {
         let reader = std::io::BufReader::new(std::io::Cursor::new(&data[..]));
         let mesh = Mesh::from_ply(reader).expect("parse quad");
         assert_eq!(mesh.face_count(), 2, "quad must fan-triangulate into 2 triangles");
+    }
+
+    #[test]
+    fn test_glb_roundtrip() {
+        let original = Mesh::cube(2.0);
+        let temp_path = std::env::temp_dir().join(format!("test_cube_{}.glb", std::process::id()));
+
+        original.save(&temp_path).expect("save GLB failed");
+        let loaded = Mesh::load(&temp_path).expect("load GLB failed");
+
+        assert_eq!(loaded.vertex_count(), original.vertex_count());
+        assert_eq!(loaded.face_count(), original.face_count());
+
+        let _ = fs::remove_file(temp_path);
     }
 }
 

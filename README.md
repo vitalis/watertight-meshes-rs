@@ -34,7 +34,7 @@ State-of-the-art generative 3D models—including **Microsoft TRELLIS.2**, **Ten
 - **🍎 Truly Cross-Platform:** Runs natively on macOS (Apple Silicon Metal & Unified Memory), Linux, and Windows with zero native C++/CUDA compiler dependencies for core mesh processing.
 - **🩺 System & Environment Doctor:** Probes GPU VRAM, Apple Metal, Blender headless paths, and ComfyUI installations.
 - **📦 Embedded Authentic Workflows:** Ships with the 4 original PixelArtistry ComfyUI workflows embedded directly in the binary.
-- **💾 Universal 3D Formats:** Direct import/export for ASCII OBJ, Binary & ASCII STL, and ASCII PLY.
+- **💾 Universal 3D Formats:** Direct import/export for ASCII OBJ, Binary & ASCII STL, ASCII PLY, and binary glTF (GLB).
 
 ---
 

@@ -54,18 +54,18 @@ enum Commands {
 
 #[derive(Args)]
 struct CheckArgs {
-    /// Path to input 3D mesh file (.obj, .stl, .ply)
+    /// Path to input 3D mesh file (.obj, .stl, .ply, .glb)
     #[arg(value_name = "INPUT")]
     input: PathBuf,
 }
 
 #[derive(Args)]
 struct RepairArgs {
-    /// Path to input 3D mesh file (.obj, .stl, .ply)
+    /// Path to input 3D mesh file (.obj, .stl, .ply, .glb)
     #[arg(value_name = "INPUT")]
     input: PathBuf,
 
-    /// Path to output 3D mesh file (.obj, .stl, .ply)
+    /// Path to output 3D mesh file (.obj, .stl, .ply, .glb)
     #[arg(short, long, value_name = "OUTPUT")]
     output: PathBuf,
 
@@ -92,11 +92,11 @@ struct RepairArgs {
 
 #[derive(Args)]
 struct RemeshArgs {
-    /// Path to input 3D mesh file (.obj, .stl, .ply)
+    /// Path to input 3D mesh file (.obj, .stl, .ply, .glb)
     #[arg(value_name = "INPUT")]
     input: PathBuf,
 
-    /// Path to output 3D mesh file (.obj, .stl, .ply)
+    /// Path to output 3D mesh file (.obj, .stl, .ply, .glb)
     #[arg(short, long, value_name = "OUTPUT")]
     output: PathBuf,
 
@@ -115,11 +115,11 @@ struct RemeshArgs {
 
 #[derive(Args)]
 struct DecimateArgs {
-    /// Path to input 3D mesh file (.obj, .stl, .ply)
+    /// Path to input 3D mesh file (.obj, .stl, .ply, .glb)
     #[arg(value_name = "INPUT")]
     input: PathBuf,
 
-    /// Path to output 3D mesh file (.obj, .stl, .ply)
+    /// Path to output 3D mesh file (.obj, .stl, .ply, .glb)
     #[arg(short, long, value_name = "OUTPUT")]
     output: PathBuf,
 
