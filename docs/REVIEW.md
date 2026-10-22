@@ -20,7 +20,7 @@
 | 8 | P2 | Installer reported success even when all clones failed | ✅ fixed |
 | 9 | P2 | Downloads installed truncated files as complete | ✅ fixed (length) |
 | 10 | P2 | Voxelization rasterizes whole triangle AABBs (fidelity) | ✅ fixed (triangle-voxel SAT) |
-| 11 | P2 | QEM priority queue is never lazily re-keyed (stale costs) | ⏳ open |
+| 11 | P2 | QEM priority queue is never lazily re-keyed (stale costs) | ✅ fixed (lazy re-keying) |
 | 12 | P2 | Hole-filler centroid fan can flip/self-intersect concave holes | ✅ fixed (ear-clipping) |
 | 13 | P3 | sha256 checksum verification for model downloads | ⏳ blocked (no hashes in repo) |
 | 14 | P3 | `rayon` and `sha2` declared but unused (single-threaded engine) | ✅ rayon removed (sha2 retained for #13) |
@@ -97,18 +97,21 @@ The centroid fan produced correctly-oriented caps only for convex/near-planar ho
 
 ### 10. Voxelization fidelity (P2, fixed)
 
-Surface rasterization marked every cell in a triangle's bounding box, so a large diagonal triangle became a thick slab. It now uses an Akenine-Möller triangle-AABB separating-axis test, marking only cells the triangle surface actually intersects — without breaking the watertightness guarantee (all 60 tests pass).
+Surface rasterization marked every cell in a triangle's bounding box, so a large diagonal triangle became a thick slab. It now uses an Akenine-Möller triangle-AABB separating-axis test, marking only cells the triangle surface actually intersects — without breaking the watertightness guarantee (all 61 tests pass).
+
+### 11. QEM lazy re-keying (P2, fixed)
+
+Collapse targets/costs were computed once at insertion and never re-solved, so after neighboring collapses accumulated quadrics onto a vertex, the heap ordered edges by stale (too-low) costs. Each pop now re-solves the cost and target and re-inserts stale entries.
 
 ---
 
 ## Verification
 
-- `cargo test` — 60 tests pass (55 lib + 5 CLI).
+- `cargo test` — 61 tests pass (56 lib + 5 CLI).
 - `cargo clippy --all-targets` — clean, zero warnings.
 - Manual repros: malformed-index OBJ no longer panics; degenerate mesh reports `χ = 0` (no genus); absurd `--resolution` errors cleanly instead of aborting; failing `git` makes `install` fail.
 
 ## Residual risks / deferred
 
-- **#11 (stale QEM heap):** collapse targets/costs are not re-solved after neighboring collapses, so results are suboptimal (not incorrect).
 - **#13 (checksums):** content-length verification catches truncation, but not silent corruption. Adding sha256 requires the actual hashes of the ~6 GB of model files, which are not in the repo.
 - **#15:** `has_inverted_normals` only detects global inversion; degenerate normals fabricate `[0,0,1]` (the field is not displayed).
