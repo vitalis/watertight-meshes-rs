@@ -31,16 +31,17 @@ impl EnvironmentInfo {
         // Probe NVIDIA GPU via nvidia-smi
         let (gpu_name, gpu_vram_gb, is_nvidia) = probe_nvidia_gpu();
 
-        // Determine recommended WTiVo resolution & proxy points
+        // Determine recommended voxel resolution. The Rust voxelizer runs on the
+        // CPU and its memory guard rejects grids above ~512, so cap there.
         let (recommended_wtivo_res, recommended_proxy_points) = match gpu_vram_gb {
-            Some(vram) if vram >= 15.0 => (2048, 25_000_000), // 16GB+ VRAM (RTX 4090/5080/5090)
-            Some(vram) if vram >= 7.5 => (1536, 12_000_000),  // 8GB+ VRAM (RTX 3070/4070)
-            Some(_) => (1024, 6_000_000),                      // 6GB VRAM
+            Some(vram) if vram >= 15.0 => (512, 1_500_000), // 16GB+ VRAM
+            Some(vram) if vram >= 7.5 => (384, 850_000),    // 8GB+ VRAM
+            Some(_) => (256, 375_000),                      // lower VRAM
             None => {
                 if is_apple_silicon {
-                    (1536, 12_000_000) // Apple Silicon Unified Memory
+                    (512, 1_500_000) // Apple Silicon Unified Memory
                 } else {
-                    (1024, 6_000_000)  // CPU Fallback
+                    (256, 375_000) // CPU fallback
                 }
             }
         };
@@ -259,7 +260,7 @@ mod tests {
         let env = EnvironmentInfo::probe();
         assert!(!env.os.is_empty());
         assert!(!env.arch.is_empty());
-        assert!(env.recommended_wtivo_res >= 1024);
+        assert!(env.recommended_wtivo_res >= 256 && env.recommended_wtivo_res <= 512);
         assert!(env.recommended_proxy_points > 0);
 
         let diag = env.format_diagnostic();
