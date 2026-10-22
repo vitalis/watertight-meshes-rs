@@ -57,6 +57,61 @@ impl Quadric {
             + d[7] * z * z + 2.0 * d[8] * z
             + d[9]
     }
+
+    /// Solve for the optimal collapse position (minimizer of v^T Q v), when the
+    /// 3x3 upper-left block is invertible.
+    pub fn solve_optimal(&self) -> Option<[f64; 3]> {
+        let d = &self.data;
+        // A = [[d0,d1,d2],[d1,d4,d5],[d2,d5,d7]] (symmetric), b = [d3,d6,d8].
+        // Solve A v = -b via Cramer's rule.
+        let a00 = d[0];
+        let a01 = d[1];
+        let a02 = d[2];
+        let a11 = d[4];
+        let a12 = d[5];
+        let a22 = d[7];
+        let b0 = -d[3];
+        let b1 = -d[6];
+        let b2 = -d[8];
+
+        let det = a00 * (a11 * a22 - a12 * a12) - a01 * (a01 * a22 - a12 * a02)
+            + a02 * (a01 * a12 - a11 * a02);
+        if det.abs() < 1e-12 {
+            return None;
+        }
+        let x = (b0 * (a11 * a22 - a12 * a12) - a01 * (b1 * a22 - a12 * b2)
+            + a02 * (b1 * a12 - a11 * b2))
+            / det;
+        let y = (a00 * (b1 * a22 - a12 * b2) - b0 * (a01 * a22 - a12 * a02)
+            + a02 * (a01 * b2 - b1 * a02))
+            / det;
+        let z = (a00 * (a11 * b2 - b1 * a12) - a01 * (a01 * b2 - b1 * a02)
+            + b0 * (a01 * a12 - a11 * a02))
+            / det;
+        Some([x, y, z])
+    }
+}
+
+/// Computes the optimal collapse target position and its quadric cost.
+fn collapse_target(q: &Quadric, p_u: [f64; 3], p_v: [f64; 3]) -> ([f64; 3], f64) {
+    if let Some(opt) = q.solve_optimal() {
+        return (opt, q.evaluate(opt));
+    }
+    let midpoint = [
+        (p_u[0] + p_v[0]) * 0.5,
+        (p_u[1] + p_v[1]) * 0.5,
+        (p_u[2] + p_v[2]) * 0.5,
+    ];
+    let cost_mid = q.evaluate(midpoint);
+    let cost_u = q.evaluate(p_u);
+    let cost_v = q.evaluate(p_v);
+    if cost_mid <= cost_u && cost_mid <= cost_v {
+        (midpoint, cost_mid)
+    } else if cost_u <= cost_v {
+        (p_u, cost_u)
+    } else {
+        (p_v, cost_v)
+    }
 }
 
 /// Candidate edge collapse entry in the priority queue
@@ -170,8 +225,9 @@ fn would_invert_or_degenerate(
         oe1[0] * oe2[1] - oe1[1] * oe2[0],
     ];
     let orig_len_sq = n_orig[0] * n_orig[0] + n_orig[1] * n_orig[1] + n_orig[2] * n_orig[2];
-    if orig_len_sq < 1e-28 {
-        // Original triangle was already degenerate; only require the result to be non-degenerate.
+    if orig_len_sq < 1e-14 {
+        // Original triangle is already near-degenerate (matches analyze_topology),
+        // so its normal is unstable; only require the result to be non-degenerate.
         return false;
     }
 
@@ -262,19 +318,7 @@ pub fn decimate_with_options(mesh: &Mesh, opts: &DecimateOptions) -> (Mesh, Deci
                 let q_sum = vertex_quadrics[u].add(&vertex_quadrics[v]);
                 let p_u = vertices[u];
                 let p_v = vertices[v];
-
-                // Candidate target: test midpoint and both endpoints
-                let midpoint = [
-                    (p_u[0] + p_v[0]) * 0.5,
-                    (p_u[1] + p_v[1]) * 0.5,
-                    (p_u[2] + p_v[2]) * 0.5,
-                ];
-
-                let cost_mid = q_sum.evaluate(midpoint);
-                let cost_u = q_sum.evaluate(p_u);
-                let cost_v = q_sum.evaluate(p_v);
-
-                let min_cost = cost_mid.min(cost_u).min(cost_v);
+                let (_, min_cost) = collapse_target(&q_sum, p_u, p_v);
 
                 heap.push(EdgeCollapseCandidate {
                     cost: min_cost,
@@ -307,21 +351,7 @@ pub fn decimate_with_options(mesh: &Mesh, opts: &DecimateOptions) -> (Mesh, Deci
         let q_sum = vertex_quadrics[u].add(&vertex_quadrics[v]);
         let p_u = vertices[u];
         let p_v = vertices[v];
-        let midpoint = [
-            (p_u[0] + p_v[0]) * 0.5,
-            (p_u[1] + p_v[1]) * 0.5,
-            (p_u[2] + p_v[2]) * 0.5,
-        ];
-        let cost_mid = q_sum.evaluate(midpoint);
-        let cost_u = q_sum.evaluate(p_u);
-        let cost_v = q_sum.evaluate(p_v);
-        let (target_pt, min_cost) = if cost_mid <= cost_u && cost_mid <= cost_v {
-            (midpoint, cost_mid)
-        } else if cost_u <= cost_v {
-            (p_u, cost_u)
-        } else {
-            (p_v, cost_v)
-        };
+        let (target_pt, min_cost) = collapse_target(&q_sum, p_u, p_v);
 
         if min_cost > candidate.cost + 1e-9 {
             // Stale entry: re-insert with the up-to-date cost and re-evaluate later.
@@ -396,6 +426,30 @@ pub fn decimate_with_options(mesh: &Mesh, opts: &DecimateOptions) -> (Mesh, Deci
             }
         }
         vertex_to_faces[v].clear();
+
+        // Add the new edges incident to the merged vertex u to the heap, so the
+        // simplification can continue past the initial static edge set.
+        let mut new_neighbors = HashSet::new();
+        for &f in &vertex_to_faces[u] {
+            if let Some(tri) = faces[f] {
+                for &w in &tri {
+                    if w != u {
+                        new_neighbors.insert(w);
+                    }
+                }
+            }
+        }
+        for w in new_neighbors {
+            if vertex_alive[w] {
+                let qs = vertex_quadrics[u].add(&vertex_quadrics[w]);
+                let (_, cost) = collapse_target(&qs, vertices[u], vertices[w]);
+                heap.push(EdgeCollapseCandidate {
+                    cost,
+                    v0: u,
+                    v1: w,
+                });
+            }
+        }
     }
 
     // 4. Compact vertices and build final simplified mesh
@@ -522,6 +576,20 @@ mod tests {
         // Point on plane has 0 error
         let cost_on_plane = q.evaluate([5.0, -2.0, 0.0]);
         assert!(cost_on_plane.abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_quadric_solve_optimal() {
+        // Sum of the three axis planes x=0, y=0, z=0 -> minimizer is the origin.
+        let q = Quadric::from_plane(1.0, 0.0, 0.0, 0.0)
+            .add(&Quadric::from_plane(0.0, 1.0, 0.0, 0.0))
+            .add(&Quadric::from_plane(0.0, 0.0, 1.0, 0.0));
+        let opt = q.solve_optimal().expect("full-rank quadric has a minimizer");
+        assert!(opt[0].abs() + opt[1].abs() + opt[2].abs() < 1e-9);
+
+        // A single plane quadric has a singular 3x3 block -> no unique minimizer.
+        let q1 = Quadric::from_plane(0.0, 0.0, 1.0, 0.0);
+        assert!(q1.solve_optimal().is_none());
     }
 
     #[test]
