@@ -153,8 +153,8 @@ fn would_invert_or_degenerate(
         e1[0] * e2[1] - e1[1] * e2[0],
     ];
     let len_sq = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
-    if len_sq < 1e-28 {
-        // Post-collapse triangle collapses to zero area.
+    if len_sq < 1e-14 {
+        // Post-collapse triangle is degenerate (matches analyze_topology's threshold).
         return true;
     }
 
@@ -363,6 +363,7 @@ pub fn decimate_with_options(mesh: &Mesh, opts: &DecimateOptions) -> (Mesh, Deci
         if inversion
             || shared_faces == 0
             || (opts.preserve_boundary && (boundary_vertex[u] || boundary_vertex[v]))
+            || !collapse_preserves_topology(u, v, &faces, &vertex_to_faces)
         {
             continue;
         }
@@ -426,6 +427,45 @@ pub fn decimate_with_options(mesh: &Mesh, opts: &DecimateOptions) -> (Mesh, Deci
     decimated.compute_vertex_normals();
 
     (decimated, stats)
+}
+
+/// Returns true if collapsing edge (u, v) preserves the manifold topology:
+/// the vertices adjacent to both u and v must equal the opposite vertices of
+/// the shared edge (the link condition).
+fn collapse_preserves_topology(
+    u: usize,
+    v: usize,
+    faces: &[Option<[usize; 3]>],
+    vertex_to_faces: &[HashSet<usize>],
+) -> bool {
+    let neighbors = |x: usize| -> HashSet<usize> {
+        let mut n = HashSet::new();
+        for &f in &vertex_to_faces[x] {
+            if let Some(tri) = faces[f] {
+                for &w in &tri {
+                    if w != x {
+                        n.insert(w);
+                    }
+                }
+            }
+        }
+        n
+    };
+
+    let common: HashSet<usize> = neighbors(u).intersection(&neighbors(v)).copied().collect();
+
+    let mut shared_opposite = HashSet::new();
+    for &f in &vertex_to_faces[u] {
+        if let Some(tri) = faces[f] {
+            if tri.contains(&v) {
+                if let Some(w) = tri.iter().copied().find(|&x| x != u && x != v) {
+                    shared_opposite.insert(w);
+                }
+            }
+        }
+    }
+
+    common == shared_opposite
 }
 
 /// Decimates a mesh down to `target_faces` using Quadric Error Metric edge collapse.
@@ -541,6 +581,36 @@ mod tests {
         let (decimated, stats) = decimate_with_options(&cylinder, &opts);
         assert!(decimated.face_count() <= 120);
         assert_eq!(stats.final_faces, decimated.face_count());
+    }
+
+    #[test]
+    fn test_collapse_topology_preservation() {
+        // An annulus (χ = 0): collapsing the shared edge (0,1) would change the
+        // topology to a disk (χ = 1), so it must be rejected.
+        let faces: Vec<Option<[usize; 3]>> = vec![
+            Some([0, 1, 2]),
+            Some([0, 1, 3]),
+            Some([0, 2, 4]),
+            Some([1, 3, 4]),
+        ];
+        let mut vtf: Vec<HashSet<usize>> = vec![HashSet::new(); 5];
+        for (f, tri) in faces.iter().enumerate() {
+            for &v in tri.as_ref().unwrap() {
+                vtf[v].insert(f);
+            }
+        }
+        assert!(!collapse_preserves_topology(0, 1, &faces, &vtf));
+
+        // A strip of three triangles (χ = 1): collapsing edge (1,2) stays a disk.
+        let faces2: Vec<Option<[usize; 3]>> =
+            vec![Some([0, 1, 2]), Some([1, 2, 3]), Some([2, 3, 4])];
+        let mut vtf2: Vec<HashSet<usize>> = vec![HashSet::new(); 5];
+        for (f, tri) in faces2.iter().enumerate() {
+            for &v in tri.as_ref().unwrap() {
+                vtf2[v].insert(f);
+            }
+        }
+        assert!(collapse_preserves_topology(1, 2, &faces2, &vtf2));
     }
 }
 
