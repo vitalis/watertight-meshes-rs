@@ -178,7 +178,6 @@
           "name": "CLIP_VISION",
           "type": "CLIP_VISION",
           "links": [
-            1221,
             1228
           ]
         }
@@ -584,8 +583,6 @@
           "name": "images",
           "type": "IMAGE",
           "links": [
-            1241,
-            1242,
             1291
           ]
         }
@@ -1236,51 +1233,6 @@
       "bgcolor": "#533"
     },
     {
-      "id": 55,
-      "type": "LoadMoGeModel",
-      "pos": [
-        -3290,
-        1020
-      ],
-      "size": [
-        370,
-        70
-      ],
-      "flags": {},
-      "order": 23,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "MOGE_MODEL",
-          "type": "MOGE_MODEL",
-          "links": [
-            288
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.33.0",
-        "Node name for S&R": "LoadMoGeModel",
-        "models": [
-          {
-            "name": "moge_2_vitl_normal_fp16.safetensors",
-            "url": "https://huggingface.co/Comfy-Org/MoGe/resolve/main/geometry_estimation/moge_2_vitl_normal_fp16.safetensors",
-            "directory": "geometry_estimation"
-          }
-        ]
-      },
-      "widgets_values": [
-        "moge_2_vitl_normal_fp16.safetensors"
-      ],
-      "widgets_values_named": {
-        "model_name": "moge_2_vitl_normal_fp16.safetensors"
-      },
-      "color": "#322",
-      "bgcolor": "#533"
-    },
-    {
       "id": 193,
       "type": "LoadBackgroundRemovalModel",
       "pos": [
@@ -1326,110 +1278,6 @@
       "bgcolor": "#533"
     },
     {
-      "id": 56,
-      "type": "MoGeInference",
-      "pos": [
-        -2870,
-        1020
-      ],
-      "size": [
-        270,
-        180
-      ],
-      "flags": {},
-      "order": 25,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "moge_model",
-          "type": "MOGE_MODEL",
-          "link": 288
-        },
-        {
-          "name": "image",
-          "type": "IMAGE",
-          "link": 1241
-        }
-      ],
-      "outputs": [
-        {
-          "name": "moge_geometry",
-          "type": "MOGE_GEOMETRY",
-          "links": [
-            1074
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.33.0",
-        "Node name for S&R": "MoGeInference"
-      },
-      "widgets_values": [
-        9,
-        0,
-        4,
-        true,
-        true
-      ],
-      "widgets_values_named": {
-        "resolution_level": 9,
-        "fov_x_degrees": 0,
-        "batch_size": 4,
-        "force_projection": true,
-        "apply_mask": true
-      }
-    },
-    {
-      "id": 242,
-      "type": "MoGeGeometryToFOV",
-      "pos": [
-        -2560,
-        1020
-      ],
-      "size": [
-        300,
-        110
-      ],
-      "flags": {},
-      "order": 26,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "moge_geometry",
-          "type": "MOGE_GEOMETRY",
-          "link": 1074
-        }
-      ],
-      "outputs": [
-        {
-          "name": "fov",
-          "type": "FLOAT",
-          "links": [
-            1223
-          ]
-        },
-        {
-          "name": "focal_pixels",
-          "type": "FLOAT",
-          "links": []
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.33.0",
-        "Node name for S&R": "MoGeGeometryToFOV"
-      },
-      "widgets_values": [
-        "horizontal",
-        "degrees"
-      ],
-      "widgets_values_named": {
-        "axis": "horizontal",
-        "unit": "degrees"
-      }
-    },
-    {
       "id": 299,
       "type": "Trellis2Conditioning",
       "pos": [
@@ -1460,14 +1308,16 @@
           "name": "positive",
           "type": "CONDITIONING",
           "links": [
-            1281
+            1275,
+            1276
           ]
         },
         {
           "name": "negative",
           "type": "CONDITIONING",
           "links": [
-            1282
+            1278,
+            1279
           ]
         }
       ],
@@ -1475,68 +1325,6 @@
         "cnr_id": "comfy-core",
         "ver": "0.17.0",
         "Node name for S&R": "Trellis2Conditioning"
-      }
-    },
-    {
-      "id": 298,
-      "type": "Pixal3DConditioning",
-      "pos": [
-        -1750,
-        920
-      ],
-      "size": [
-        230,
-        90
-      ],
-      "flags": {},
-      "order": 28,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "clip_vision_model",
-          "type": "CLIP_VISION",
-          "link": 1221
-        },
-        {
-          "name": "image",
-          "type": "IMAGE",
-          "link": 1242
-        },
-        {
-          "name": "camera_angle_x",
-          "type": "FLOAT",
-          "widget": {
-            "name": "camera_angle_x"
-          },
-          "link": 1223
-        }
-      ],
-      "outputs": [
-        {
-          "name": "positive",
-          "type": "CONDITIONING",
-          "links": [
-            1277
-          ]
-        },
-        {
-          "name": "negative",
-          "type": "CONDITIONING",
-          "links": [
-            1280
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.33.0",
-        "Node name for S&R": "Pixal3DConditioning"
-      },
-      "widgets_values": [
-        49.13
-      ],
-      "widgets_values_named": {
-        "camera_angle_x": 49.13
       }
     },
     {
@@ -1607,7 +1395,9 @@
           "name": "MODEL",
           "type": "MODEL",
           "links": [
-            1290
+            1287,
+            1288,
+            1289
           ]
         }
       ],
@@ -1920,293 +1710,10 @@
       "title": "Models \u00b7 Hugging Face downloads",
       "properties": {},
       "widgets_values": [
-        "## Models \u2013 official Hugging Face downloads\n\nFiles repackaged for ComfyUI by Comfy-Org. The PixelArtistry installer checks them and downloads missing ones for you. Manual download: put each file into the folder shown.\n\n**ComfyUI/models/diffusion_models**\n- [pixal3d_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/diffusion_models/pixal3d_int8_convrot.safetensors) \u2013 Pixal3D (default)\n- [trellis_2_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/TRELLIS.2/resolve/main/diffusion_models/trellis_2_int8_convrot.safetensors) \u2013 Trellis.2\n\n**ComfyUI/models/vae**\n- [trellis_2_shape_vae_bf16.safetensors](https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/vae/trellis_2_shape_vae_bf16.safetensors)\n- [trellis_2_texture_vae_bf16.safetensors](https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/vae/trellis_2_texture_vae_bf16.safetensors)\n\n**ComfyUI/models/clip_vision**\n- [dino_v3_L_naf_fp32.safetensors](https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/clip_vision/dino_v3_L_naf_fp32.safetensors)\n\n**ComfyUI/models/geometry_estimation**\n- [moge_2_vitl_normal_fp16.safetensors](https://huggingface.co/Comfy-Org/MoGe/resolve/main/geometry_estimation/moge_2_vitl_normal_fp16.safetensors)\n\n**ComfyUI/models/background_removal**\n- [birefnet.safetensors](https://huggingface.co/Comfy-Org/BiRefNet/resolve/main/background_removal/birefnet.safetensors)\n\n## Model pages\n- ComfyUI files: [Comfy-Org/Pixal3D](https://huggingface.co/Comfy-Org/Pixal3D) \u00b7 [Comfy-Org/TRELLIS.2](https://huggingface.co/Comfy-Org/TRELLIS.2) \u00b7 [Comfy-Org/MoGe](https://huggingface.co/Comfy-Org/MoGe) \u00b7 [Comfy-Org/BiRefNet](https://huggingface.co/Comfy-Org/BiRefNet)\n- Original models: [Pixal3D by Tencent ARC](https://huggingface.co/TencentARC/Pixal3D) \u00b7 [TRELLIS.2 by Microsoft](https://huggingface.co/microsoft/TRELLIS.2-4B)\n\n## Example input\n[viking_wolf_rune_axe.png](https://raw.githubusercontent.com/Comfy-Org/workflow_templates/refs/heads/main/input/viking_wolf_rune_axe.png) \u2192 `ComfyUI/input` (the installer downloads it)"
+        "## Models \u2013 official Hugging Face downloads\n\nFiles repackaged for ComfyUI by Comfy-Org. The PixelArtistry installer checks them and downloads missing ones for you. Manual download: put each file into the folder shown.\n\n**ComfyUI/models/diffusion_models**\n- [trellis_2_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/TRELLIS.2/resolve/main/diffusion_models/trellis_2_int8_convrot.safetensors) \u2013 Trellis.2\n\n**ComfyUI/models/vae**\n- [trellis_2_shape_vae_bf16.safetensors](https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/vae/trellis_2_shape_vae_bf16.safetensors)\n- [trellis_2_texture_vae_bf16.safetensors](https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/vae/trellis_2_texture_vae_bf16.safetensors)\n\n**ComfyUI/models/clip_vision**\n- [dino_v3_L_naf_fp32.safetensors](https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/clip_vision/dino_v3_L_naf_fp32.safetensors)\n\n**ComfyUI/models/background_removal**\n- [birefnet.safetensors](https://huggingface.co/Comfy-Org/BiRefNet/resolve/main/background_removal/birefnet.safetensors)\n\n## Model pages\n- ComfyUI files: [Comfy-Org/Pixal3D](https://huggingface.co/Comfy-Org/Pixal3D) \u00b7 [Comfy-Org/TRELLIS.2](https://huggingface.co/Comfy-Org/TRELLIS.2) \u00b7 [Comfy-Org/BiRefNet](https://huggingface.co/Comfy-Org/BiRefNet)\n- Original models: [Pixal3D by Tencent ARC](https://huggingface.co/TencentARC/Pixal3D) \u00b7 [TRELLIS.2 by Microsoft](https://huggingface.co/microsoft/TRELLIS.2-4B)\n\n## Example input\n[viking_wolf_rune_axe.png](https://raw.githubusercontent.com/Comfy-Org/workflow_templates/refs/heads/main/input/viking_wolf_rune_axe.png) \u2192 `ComfyUI/input` (the installer downloads it)"
       ],
       "color": "#222",
       "bgcolor": "#000"
-    },
-    {
-      "id": 314,
-      "type": "ComfySwitchNode",
-      "pos": [
-        -1420,
-        900
-      ],
-      "size": [
-        270,
-        110
-      ],
-      "flags": {},
-      "order": 37,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "on_false",
-          "type": "CONDITIONING",
-          "link": 1277
-        },
-        {
-          "name": "on_true",
-          "type": "CONDITIONING",
-          "link": 1281
-        },
-        {
-          "name": "switch",
-          "type": "BOOLEAN",
-          "widget": {
-            "name": "switch"
-          },
-          "link": 1283
-        }
-      ],
-      "outputs": [
-        {
-          "name": "output",
-          "type": "CONDITIONING",
-          "links": [
-            1275,
-            1276
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.33.0",
-        "Node name for S&R": "ComfySwitchNode"
-      },
-      "widgets_values": [
-        false
-      ],
-      "widgets_values_named": {
-        "switch": false
-      }
-    },
-    {
-      "id": 315,
-      "type": "ComfySwitchNode",
-      "pos": [
-        -1420,
-        1070
-      ],
-      "size": [
-        270,
-        110
-      ],
-      "flags": {},
-      "order": 38,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "on_false",
-          "type": "CONDITIONING",
-          "link": 1280
-        },
-        {
-          "name": "on_true",
-          "type": "CONDITIONING",
-          "link": 1282
-        },
-        {
-          "name": "switch",
-          "type": "BOOLEAN",
-          "widget": {
-            "name": "switch"
-          },
-          "link": 1284
-        }
-      ],
-      "outputs": [
-        {
-          "name": "output",
-          "type": "CONDITIONING",
-          "links": [
-            1278,
-            1279
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.33.0",
-        "Node name for S&R": "ComfySwitchNode"
-      },
-      "widgets_values": [
-        false
-      ],
-      "widgets_values_named": {
-        "switch": false
-      }
-    },
-    {
-      "id": 316,
-      "type": "PrimitiveBoolean",
-      "pos": [
-        -2160,
-        550
-      ],
-      "size": [
-        270,
-        70
-      ],
-      "flags": {},
-      "order": 39,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "BOOLEAN",
-          "type": "BOOLEAN",
-          "links": [
-            1283,
-            1284,
-            1285
-          ]
-        }
-      ],
-      "title": "Boolean (Switch to Trellis2)",
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.33.0",
-        "Node name for S&R": "PrimitiveBoolean"
-      },
-      "widgets_values": [
-        false
-      ],
-      "widgets_values_named": {
-        "value": false
-      },
-      "color": "#322",
-      "bgcolor": "#533"
-    },
-    {
-      "id": 317,
-      "type": "MarkdownNote",
-      "pos": [
-        -2160,
-        680
-      ],
-      "size": [
-        270,
-        90
-      ],
-      "flags": {},
-      "order": 40,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "properties": {},
-      "widgets_values": [
-        "Set to `false` to use Pixal3D\n\nSet to `true` to use Trellis.2"
-      ],
-      "widgets_values_named": {
-        "text": "Set to `false` to use Pixal3D\n\nSet to `true` to use Trellis.2"
-      },
-      "color": "#222",
-      "bgcolor": "#000"
-    },
-    {
-      "id": 318,
-      "type": "ComfySwitchNode",
-      "pos": [
-        -1420,
-        590
-      ],
-      "size": [
-        270,
-        110
-      ],
-      "flags": {},
-      "order": 41,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "on_false",
-          "type": "MODEL",
-          "link": 1286
-        },
-        {
-          "name": "on_true",
-          "type": "MODEL",
-          "link": 1290
-        },
-        {
-          "name": "switch",
-          "type": "BOOLEAN",
-          "widget": {
-            "name": "switch"
-          },
-          "link": 1285
-        }
-      ],
-      "outputs": [
-        {
-          "name": "output",
-          "type": "MODEL",
-          "links": [
-            1287,
-            1288,
-            1289
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.33.0",
-        "Node name for S&R": "ComfySwitchNode"
-      },
-      "widgets_values": [
-        false
-      ],
-      "widgets_values_named": {
-        "switch": false
-      }
-    },
-    {
-      "id": 319,
-      "type": "UNETLoader",
-      "pos": [
-        -1850,
-        510
-      ],
-      "size": [
-        330,
-        90
-      ],
-      "flags": {},
-      "order": 42,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "MODEL",
-          "type": "MODEL",
-          "links": [
-            1286
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.33.0",
-        "Node name for S&R": "UNETLoader",
-        "models": [
-          {
-            "name": "pixal3d_int8_convrot.safetensors",
-            "url": "https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/diffusion_models/pixal3d_int8_convrot.safetensors",
-            "directory": "diffusion_models"
-          }
-        ]
-      },
-      "widgets_values": [
-        "pixal3d_int8_convrot.safetensors",
-        "default"
-      ],
-      "widgets_values_named": {
-        "unet_name": "pixal3d_int8_convrot.safetensors",
-        "weight_dtype": "default"
-      },
-      "color": "#322",
-      "bgcolor": "#533"
     },
     {
       "id": 324,
@@ -3545,7 +3052,7 @@
       "title": "PixelArtistry \u00b7 Start here",
       "properties": {},
       "widgets_values": [
-        "# PixelArtistry \u00b7 Image \u2192 Game-Ready 3D Asset\n\nFree & local ComfyUI workflow by **PixelArtistry**.\n\n## How to use\n1. Load your image in **Load Image** (green group).\n2. Set your Blender path once in **Blender path** (purple group 1).\n3. Choose the model with **Boolean (Switch to Trellis2)**: `false` = Pixal3D, `true` = Trellis.2\n4. Set **LODTailor (A)** `target_tris`: 20\u201330k for characters, 500\u20131,000 for props.\n5. Press **Run**.\n\n## What happens\nPixal3D / Trellis.2 generate shape + texture \u2192 **Quad Reconstruct \u2192 WTiVo \u2192 LODTailor** make a watertight high-poly \u2192 it gets its textures (`PixelArtistry_highpoly`) \u2192 **LODTailor** builds the low-poly \u2192 **Bake Forger** bakes all maps onto it \u2192 **Fast Merge** welds duplicate vertices without breaking the UVs (`PixelArtistry_lowpoly`).\n\nBoth files land in `ComfyUI/output/3d/`.\n\n## PixelArtistry\n- Website: https://pixel-artistry.com\n- YouTube: https://www.youtube.com/@PixelArtistry_\n- X: https://x.com/philippsieben\n- Newsletter FutureFrames: https://go.pixel-artistry.com/newsletter\n\n## Built with MostAadTech's nodes\nThe watertight, low-poly and baking steps in this workflow run on free, open-source ComfyUI nodes by **MostAadTech**. He spent over a month building them and was a huge help while these workflows were made \u2013 please show him some love:\n\n- **Quad Reconstruct** \u2013 cleans the raw mesh and removes floating fragments\n- **Memory Cleaner** \u2013 frees VRAM between the heavy steps\n- **WTiVo** \u2013 makes the mesh watertight\n- **LODTailor** \u2013 builds the lighter or low-poly mesh in Blender\n- **Bake Forger** \u2013 bakes the high-poly maps onto the low-poly\n- **Fast Merge** \u2013 welds duplicate vertices for a clean final file\n\n**Follow & support MostAadTech**\n- YouTube: https://www.youtube.com/@MostAadTech\n- Patreon: https://www.patreon.com/cw/MostafaAwad/membership\n- GitHub: https://github.com/Mstafa-awad\n- X: https://x.com/MostAadTech\n\n---\n\nWorkflow built on ComfyUI's official Pixal3D / Trellis.2 template (MIT, \u00a9 Comfy Org)."
+        "# PixelArtistry \u00b7 Image \u2192 Game-Ready 3D Asset\n\nFree & local ComfyUI workflow by **PixelArtistry**.\n\n## How to use\n1. Load your image in **Load Image** (green group).\n2. Set your Blender path once in **Blender path** (purple group 1).\n3. Set **LODTailor (A)** `target_tris`: 20\u201330k for characters, 500\u20131,000 for props.\n4. Press **Run**.\n\n## What happens\nTrellis.2 generates shape + texture \u2192 **Quad Reconstruct \u2192 WTiVo \u2192 LODTailor** make a watertight high-poly \u2192 it gets its textures (`PixelArtistry_highpoly`) \u2192 **LODTailor** builds the low-poly \u2192 **Bake Forger** bakes all maps onto it \u2192 **Fast Merge** welds duplicate vertices without breaking the UVs (`PixelArtistry_lowpoly`).\n\nBoth files land in `ComfyUI/output/3d/`.\n\n## PixelArtistry\n- Website: https://pixel-artistry.com\n- YouTube: https://www.youtube.com/@PixelArtistry_\n- X: https://x.com/philippsieben\n- Newsletter FutureFrames: https://go.pixel-artistry.com/newsletter\n\n## Built with MostAadTech's nodes\nThe watertight, low-poly and baking steps in this workflow run on free, open-source ComfyUI nodes by **MostAadTech**. He spent over a month building them and was a huge help while these workflows were made \u2013 please show him some love:\n\n- **Quad Reconstruct** \u2013 cleans the raw mesh and removes floating fragments\n- **Memory Cleaner** \u2013 frees VRAM between the heavy steps\n- **WTiVo** \u2013 makes the mesh watertight\n- **LODTailor** \u2013 builds the lighter or low-poly mesh in Blender\n- **Bake Forger** \u2013 bakes the high-poly maps onto the low-poly\n- **Fast Merge** \u2013 welds duplicate vertices for a clean final file\n\n**Follow & support MostAadTech**\n- YouTube: https://www.youtube.com/@MostAadTech\n- Patreon: https://www.patreon.com/cw/MostafaAwad/membership\n- GitHub: https://github.com/Mstafa-awad\n- X: https://x.com/MostAadTech\n\n---\n\nWorkflow built on ComfyUI's official Pixal3D / Trellis.2 template (MIT, \u00a9 Comfy Org)."
       ]
     },
     {
@@ -3574,14 +3081,6 @@
     }
   ],
   "links": [
-    [
-      288,
-      55,
-      0,
-      56,
-      0,
-      "MOGE_MODEL"
-    ],
     [
       509,
       87,
@@ -3815,14 +3314,6 @@
       "MODEL"
     ],
     [
-      1074,
-      56,
-      0,
-      242,
-      0,
-      "MOGE_GEOMETRY"
-    ],
-    [
       1096,
       4,
       0,
@@ -3871,22 +3362,6 @@
       "MODEL"
     ],
     [
-      1221,
-      15,
-      0,
-      298,
-      0,
-      "CLIP_VISION"
-    ],
-    [
-      1223,
-      242,
-      0,
-      298,
-      2,
-      "FLOAT"
-    ],
-    [
       1228,
       15,
       0,
@@ -3901,22 +3376,6 @@
       303,
       0,
       "MASK"
-    ],
-    [
-      1241,
-      302,
-      0,
-      56,
-      1,
-      "IMAGE"
-    ],
-    [
-      1242,
-      302,
-      0,
-      298,
-      1,
-      "IMAGE"
     ],
     [
       1253,
@@ -3968,7 +3427,7 @@
     ],
     [
       1275,
-      314,
+      299,
       0,
       3,
       1,
@@ -3976,95 +3435,31 @@
     ],
     [
       1276,
-      314,
+      299,
       0,
       91,
       0,
       "CONDITIONING"
     ],
     [
-      1277,
-      298,
-      0,
-      314,
-      0,
-      "CONDITIONING"
-    ],
-    [
       1278,
-      315,
-      0,
+      299,
+      1,
       3,
       2,
       "CONDITIONING"
     ],
     [
       1279,
-      315,
-      0,
+      299,
+      1,
       91,
       1,
       "CONDITIONING"
     ],
     [
-      1280,
-      298,
-      1,
-      315,
-      0,
-      "CONDITIONING"
-    ],
-    [
-      1281,
-      299,
-      0,
-      314,
-      1,
-      "CONDITIONING"
-    ],
-    [
-      1282,
-      299,
-      1,
-      315,
-      1,
-      "CONDITIONING"
-    ],
-    [
-      1283,
-      316,
-      0,
-      314,
-      2,
-      "BOOLEAN"
-    ],
-    [
-      1284,
-      316,
-      0,
-      315,
-      2,
-      "BOOLEAN"
-    ],
-    [
-      1285,
-      316,
-      0,
-      318,
-      2,
-      "BOOLEAN"
-    ],
-    [
-      1286,
-      319,
-      0,
-      318,
-      0,
-      "MODEL"
-    ],
-    [
       1287,
-      318,
+      40,
       0,
       199,
       0,
@@ -4072,7 +3467,7 @@
     ],
     [
       1288,
-      318,
+      40,
       0,
       279,
       0,
@@ -4080,18 +3475,10 @@
     ],
     [
       1289,
-      318,
+      40,
       0,
       12,
       0,
-      "MODEL"
-    ],
-    [
-      1290,
-      40,
-      0,
-      318,
-      1,
       "MODEL"
     ],
     [
@@ -4433,18 +3820,6 @@
       "flags": {}
     },
     {
-      "id": 9,
-      "title": "Get Camera FoV",
-      "bounding": [
-        -3300,
-        950,
-        1050,
-        260
-      ],
-      "color": "#8A8",
-      "flags": {}
-    },
-    {
       "id": 10,
       "title": "Remove Background",
       "bounding": [
@@ -4478,18 +3853,6 @@
         790
       ],
       "color": "#3f789e",
-      "flags": {}
-    },
-    {
-      "id": 17,
-      "title": "Switch Model Here",
-      "bounding": [
-        -2170,
-        480,
-        290,
-        300
-      ],
-      "color": "#a1309b",
       "flags": {}
     },
     {
