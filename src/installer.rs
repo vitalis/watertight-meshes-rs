@@ -97,11 +97,6 @@ pub const MODEL_FILES: &[ModelFile] = &[
         download_url: "https://huggingface.co/Comfy-Org/TRELLIS.2/resolve/main/diffusion_models/trellis_2_int8_convrot.safetensors",
     },
     ModelFile {
-        subfolder: "diffusion_models",
-        filename: "pixal3d_int8_convrot.safetensors",
-        download_url: "https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/diffusion_models/pixal3d_int8_convrot.safetensors",
-    },
-    ModelFile {
         subfolder: "vae",
         filename: "trellis_2_shape_vae_bf16.safetensors",
         download_url: "https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/vae/trellis_2_shape_vae_bf16.safetensors",
@@ -421,7 +416,7 @@ mod tests {
 
     #[test]
     fn test_model_files_list_integrity() {
-        assert_eq!(MODEL_FILES.len(), 9, "Must contain exactly 9 model weights/configs");
+        assert_eq!(MODEL_FILES.len(), 8, "Must contain exactly 8 model weights/configs");
         for model in MODEL_FILES {
             assert!(!model.subfolder.is_empty());
             assert!(!model.filename.is_empty());
