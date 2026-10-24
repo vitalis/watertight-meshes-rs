@@ -1229,18 +1229,18 @@
         "Node name for S&R": "UNETLoader",
         "models": [
           {
-            "name": "trellis_2_int8_convrot.safetensors",
-            "url": "https://huggingface.co/Comfy-Org/TRELLIS.2/resolve/main/diffusion_models/trellis_2_int8_convrot.safetensors",
+            "name": "trellis_2_bf16.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/TRELLIS.2/resolve/main/diffusion_models/trellis_2_bf16.safetensors",
             "directory": "diffusion_models"
           }
         ]
       },
       "widgets_values": [
-        "trellis_2_int8_convrot.safetensors",
+        "trellis_2_bf16.safetensors",
         "default"
       ],
       "widgets_values_named": {
-        "unet_name": "trellis_2_int8_convrot.safetensors",
+        "unet_name": "trellis_2_bf16.safetensors",
         "weight_dtype": "default"
       },
       "color": "#322",
@@ -1462,7 +1462,7 @@
       "title": "Models \u00b7 Hugging Face downloads",
       "properties": {},
       "widgets_values": [
-        "## Models \u2013 official Hugging Face downloads\n\nFiles repackaged for ComfyUI by Comfy-Org. The PixelArtistry installer checks them and downloads missing ones for you. Manual download: put each file into the folder shown.\n\n**ComfyUI/models/diffusion_models**\n- [trellis_2_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/TRELLIS.2/resolve/main/diffusion_models/trellis_2_int8_convrot.safetensors) \u2013 Trellis.2\n\n**ComfyUI/models/vae**\n- [trellis_2_shape_vae_bf16.safetensors](https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/vae/trellis_2_shape_vae_bf16.safetensors)\n\n**ComfyUI/models/clip_vision**\n- [dino_v3_L_naf_fp32.safetensors](https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/clip_vision/dino_v3_L_naf_fp32.safetensors)\n\n**ComfyUI/models/background_removal**\n- [birefnet.safetensors](https://huggingface.co/Comfy-Org/BiRefNet/resolve/main/background_removal/birefnet.safetensors)\n\n## Model pages\n- ComfyUI files: [Comfy-Org/Pixal3D](https://huggingface.co/Comfy-Org/Pixal3D) \u00b7 [Comfy-Org/TRELLIS.2](https://huggingface.co/Comfy-Org/TRELLIS.2) \u00b7 [Comfy-Org/BiRefNet](https://huggingface.co/Comfy-Org/BiRefNet)\n- Original models: [Pixal3D by Tencent ARC](https://huggingface.co/TencentARC/Pixal3D) \u00b7 [TRELLIS.2 by Microsoft](https://huggingface.co/microsoft/TRELLIS.2-4B)\n\n## Example input\n[viking_wolf_rune_axe.png](https://raw.githubusercontent.com/Comfy-Org/workflow_templates/refs/heads/main/input/viking_wolf_rune_axe.png) \u2192 `ComfyUI/input` (the installer downloads it)"
+        "## Models \u2013 official Hugging Face downloads\n\nFiles repackaged for ComfyUI by Comfy-Org. The PixelArtistry installer checks them and downloads missing ones for you. Manual download: put each file into the folder shown.\n\n**ComfyUI/models/diffusion_models**\n- [trellis_2_bf16.safetensors](https://huggingface.co/Comfy-Org/TRELLIS.2/resolve/main/diffusion_models/trellis_2_bf16.safetensors) \u2013 Trellis.2\n\n**ComfyUI/models/vae**\n- [trellis_2_shape_vae_bf16.safetensors](https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/vae/trellis_2_shape_vae_bf16.safetensors)\n\n**ComfyUI/models/clip_vision**\n- [dino_v3_L_naf_fp32.safetensors](https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/clip_vision/dino_v3_L_naf_fp32.safetensors)\n\n**ComfyUI/models/background_removal**\n- [birefnet.safetensors](https://huggingface.co/Comfy-Org/BiRefNet/resolve/main/background_removal/birefnet.safetensors)\n\n## Model pages\n- ComfyUI files: [Comfy-Org/Pixal3D](https://huggingface.co/Comfy-Org/Pixal3D) \u00b7 [Comfy-Org/TRELLIS.2](https://huggingface.co/Comfy-Org/TRELLIS.2) \u00b7 [Comfy-Org/BiRefNet](https://huggingface.co/Comfy-Org/BiRefNet)\n- Original models: [Pixal3D by Tencent ARC](https://huggingface.co/TencentARC/Pixal3D) \u00b7 [TRELLIS.2 by Microsoft](https://huggingface.co/microsoft/TRELLIS.2-4B)\n\n## Example input\n[viking_wolf_rune_axe.png](https://raw.githubusercontent.com/Comfy-Org/workflow_templates/refs/heads/main/input/viking_wolf_rune_axe.png) \u2192 `ComfyUI/input` (the installer downloads it)"
       ],
       "color": "#222",
       "bgcolor": "#000"

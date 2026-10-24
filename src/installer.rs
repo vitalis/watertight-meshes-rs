@@ -93,8 +93,8 @@ pub struct ModelFile {
 pub const MODEL_FILES: &[ModelFile] = &[
     ModelFile {
         subfolder: "diffusion_models",
-        filename: "trellis_2_int8_convrot.safetensors",
-        download_url: "https://huggingface.co/Comfy-Org/TRELLIS.2/resolve/main/diffusion_models/trellis_2_int8_convrot.safetensors",
+        filename: "trellis_2_bf16.safetensors",
+        download_url: "https://huggingface.co/Comfy-Org/TRELLIS.2/resolve/main/diffusion_models/trellis_2_bf16.safetensors",
     },
     ModelFile {
         subfolder: "vae",
@@ -110,11 +110,6 @@ pub const MODEL_FILES: &[ModelFile] = &[
         subfolder: "clip_vision",
         filename: "dino_v3_L_naf_fp32.safetensors",
         download_url: "https://huggingface.co/Comfy-Org/Pixal3D/resolve/main/clip_vision/dino_v3_L_naf_fp32.safetensors",
-    },
-    ModelFile {
-        subfolder: "geometry_estimation",
-        filename: "moge_2_vitl_normal_fp16.safetensors",
-        download_url: "https://huggingface.co/Comfy-Org/MoGe/resolve/main/geometry_estimation/moge_2_vitl_normal_fp16.safetensors",
     },
     ModelFile {
         subfolder: "background_removal",
@@ -416,7 +411,7 @@ mod tests {
 
     #[test]
     fn test_model_files_list_integrity() {
-        assert_eq!(MODEL_FILES.len(), 8, "Must contain exactly 8 model weights/configs");
+        assert_eq!(MODEL_FILES.len(), 7, "Must contain exactly 7 model weights/configs");
         for model in MODEL_FILES {
             assert!(!model.subfolder.is_empty());
             assert!(!model.filename.is_empty());
@@ -435,13 +430,13 @@ mod tests {
         // Create 1 mock node
         fs::create_dir_all(nodes_dir.join("WTiVo-WatertightVoxel-ComfyuiNode")).unwrap();
         // Create 1 mock model
-        File::create(models_dir.join("trellis_2_int8_convrot.safetensors")).unwrap();
+        File::create(models_dir.join("trellis_2_bf16.safetensors")).unwrap();
 
         let report = audit_comfyui(&temp_dir);
         assert_eq!(report.nodes_present, 1);
         assert_eq!(report.nodes_missing, 8);
         assert_eq!(report.models_present, 1);
-        assert_eq!(report.models_missing, 8);
+        assert_eq!(report.models_missing, 6);
         assert!(!report.workflows_installed);
 
         let detected = detect_comfyui_dir(Some(&temp_dir));
