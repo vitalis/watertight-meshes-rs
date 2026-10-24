@@ -1,8 +1,8 @@
 {
   "id": "342dab29-b8db-4bb1-b6b3-69c112f0d9ce",
   "revision": 0,
-  "last_node_id": 334,
-  "last_link_id": 1304,
+  "last_node_id": 335,
+  "last_link_id": 1305,
   "nodes": [
     {
       "id": 91,
@@ -1030,9 +1030,7 @@
           "name": "VAE",
           "type": "VAE",
           "links": [
-            1253,
-            1265,
-            1266
+            1305
           ]
         }
       ],
@@ -1929,6 +1927,44 @@
       "widgets_values": [
         "Built on the official ComfyUI template *3d_pixal3d_trellis2_image_to_model* \u2013 https://github.com/Comfy-Org/workflow_templates\n\n```\nMIT License\n\nCopyright (c) 2023-present Comfy Org\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n```"
       ]
+    },
+    {
+      "id": 335,
+      "type": "Trellis2VaeFp8",
+      "pos": [
+        -1110,
+        780
+      ],
+      "size": [
+        250,
+        60
+      ],
+      "flags": {},
+      "order": 50,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 1305
+        }
+      ],
+      "outputs": [
+        {
+          "name": "vae",
+          "type": "VAE",
+          "links": [
+            1253,
+            1265,
+            1266
+          ]
+        }
+      ],
+      "title": "Trellis2 VAE FP8",
+      "properties": {
+        "Node name for S&R": "Trellis2VaeFp8"
+      },
+      "widgets_values": []
     }
   ],
   "links": [
@@ -2158,7 +2194,7 @@
     ],
     [
       1253,
-      117,
+      335,
       0,
       119,
       1,
@@ -2182,7 +2218,7 @@
     ],
     [
       1265,
-      117,
+      335,
       0,
       94,
       3,
@@ -2190,7 +2226,7 @@
     ],
     [
       1266,
-      117,
+      335,
       0,
       92,
       1,
@@ -2323,6 +2359,14 @@
       331,
       0,
       "FILE_3D_GLB"
+    ],
+    [
+      1305,
+      117,
+      0,
+      335,
+      0,
+      "VAE"
     ]
   ],
   "groups": [
