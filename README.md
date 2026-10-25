@@ -106,7 +106,7 @@ Options:
 - `--res <INT>`: Voxel bounding grid resolution (default: `128`)
 - `--target-faces <INT>`: Decimate output to target polygon count (optional)
 - `--no-fill-holes`: Skip topological boundary filling
-- `--no-remesh`: Prevent Marching Cubes fallback
+- `--no-remesh`: Close on the original surface (weld, fin drop, hole fill) and skip Marching Cubes. Writes the mesh either way. Exits non-zero when it is still not watertight. Ignores `--target-faces`.
 
 ---
 

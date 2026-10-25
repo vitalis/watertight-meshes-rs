@@ -8,10 +8,10 @@ use colored::*;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use watertight::{
-    analyze_topology, audit_comfyui, auto_repair, decimate_with_options, detect_comfyui_dir,
-    detect_hardware, export_all_workflows, get_all_workflows, install_node_packs,
-    install_workflows, voxelize_and_remesh, DecimateOptions, Mesh, RepairConfig,
-    VoxelRemeshOptions,
+    analyze_topology, audit_comfyui, auto_repair, close_surface, decimate_with_options,
+    detect_comfyui_dir, detect_hardware, export_all_workflows, get_all_workflows,
+    install_node_packs, install_workflows, voxelize_and_remesh, DecimateOptions, Mesh,
+    RepairConfig, VoxelRemeshOptions,
 };
 
 #[derive(Parser)]
@@ -77,7 +77,7 @@ struct RepairArgs {
     #[arg(long)]
     no_fill_holes: bool,
 
-    /// Skip voxel remeshing
+    /// Close on the original surface instead of voxel remeshing. Exits non-zero if the mesh is still not watertight. Ignores --target-faces.
     #[arg(long)]
     no_remesh: bool,
 
@@ -205,7 +205,11 @@ fn run_check(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn run_repair(args: RepairArgs) -> Result<(), Box<dyn std::error::Error>> {
-    println!("{} Loading mesh: {}", "==>".bold().green(), args.input.display());
+    println!(
+        "{} Loading mesh: {}",
+        "==>".bold().green(),
+        args.input.display()
+    );
     let start = Instant::now();
     let mesh = Mesh::load(&args.input)?;
 
@@ -217,21 +221,66 @@ fn run_repair(args: RepairArgs) -> Result<(), Box<dyn std::error::Error>> {
         target_faces: args.target_faces,
     };
 
-    println!("{} Running automated repair pipeline...", "==>".bold().green());
+    if args.no_remesh {
+        println!(
+            "{} Closing the mesh on its own surface...",
+            "==>".bold().green()
+        );
+        let (closed, report) = close_surface(&mesh, args.weld_dist as f64, !args.no_fill_holes);
+        for line in &report.log {
+            println!("  {} {}", "•".cyan(), line);
+        }
+        println!("\n{}", report.health);
+        println!(
+            "{} Saving repaired mesh to: {}",
+            "==>".bold().green(),
+            args.output.display()
+        );
+        closed.save(&args.output)?;
+        println!(
+            "{} Completed in {:.2}s",
+            "✓".bold().green(),
+            start.elapsed().as_secs_f64()
+        );
+        if !report.health.is_watertight {
+            return Err(
+                "Surface close left the mesh short of watertight. The patched mesh was written."
+                    .into(),
+            );
+        }
+        return Ok(());
+    }
+
+    println!(
+        "{} Running automated repair pipeline...",
+        "==>".bold().green()
+    );
     let (repaired, logs) = auto_repair(&mesh, &config)?;
 
     for log in logs {
         println!("  {} {}", "•".cyan(), log);
     }
 
-    println!("{} Saving repaired mesh to: {}", "==>".bold().green(), args.output.display());
+    println!(
+        "{} Saving repaired mesh to: {}",
+        "==>".bold().green(),
+        args.output.display()
+    );
     repaired.save(&args.output)?;
-    println!("{} Completed in {:.2}s", "✓".bold().green(), start.elapsed().as_secs_f64());
+    println!(
+        "{} Completed in {:.2}s",
+        "✓".bold().green(),
+        start.elapsed().as_secs_f64()
+    );
     Ok(())
 }
 
 fn run_remesh(args: RemeshArgs) -> Result<(), Box<dyn std::error::Error>> {
-    println!("{} Loading mesh: {}", "==>".bold().green(), args.input.display());
+    println!(
+        "{} Loading mesh: {}",
+        "==>".bold().green(),
+        args.input.display()
+    );
     let start = Instant::now();
     let mesh = Mesh::load(&args.input)?;
 
@@ -256,14 +305,26 @@ fn run_remesh(args: RemeshArgs) -> Result<(), Box<dyn std::error::Error>> {
         remeshed.face_count()
     );
 
-    println!("{} Saving to {}", "==>".bold().green(), args.output.display());
+    println!(
+        "{} Saving to {}",
+        "==>".bold().green(),
+        args.output.display()
+    );
     remeshed.save(&args.output)?;
-    println!("{} Remesh done in {:.2}s", "✓".bold().green(), start.elapsed().as_secs_f64());
+    println!(
+        "{} Remesh done in {:.2}s",
+        "✓".bold().green(),
+        start.elapsed().as_secs_f64()
+    );
     Ok(())
 }
 
 fn run_decimate(args: DecimateArgs) -> Result<(), Box<dyn std::error::Error>> {
-    println!("{} Loading mesh: {}", "==>".bold().green(), args.input.display());
+    println!(
+        "{} Loading mesh: {}",
+        "==>".bold().green(),
+        args.input.display()
+    );
     let start = Instant::now();
     let mesh = Mesh::load(&args.input)?;
 
@@ -287,9 +348,17 @@ fn run_decimate(args: DecimateArgs) -> Result<(), Box<dyn std::error::Error>> {
         report.reduction_percentage
     );
 
-    println!("{} Saving to {}", "==>".bold().green(), args.output.display());
+    println!(
+        "{} Saving to {}",
+        "==>".bold().green(),
+        args.output.display()
+    );
     decimated.save(&args.output)?;
-    println!("{} Decimation done in {:.2}s", "✓".bold().green(), start.elapsed().as_secs_f64());
+    println!(
+        "{} Decimation done in {:.2}s",
+        "✓".bold().green(),
+        start.elapsed().as_secs_f64()
+    );
     Ok(())
 }
 
@@ -299,7 +368,10 @@ fn run_doctor(hint: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n{}", "--- ComfyUI Environment Audit ---".bold().cyan());
     if let Some(comfy_dir) = detect_comfyui_dir(hint.as_deref()) {
-        println!("  ComfyUI Directory: {}", comfy_dir.display().to_string().bold());
+        println!(
+            "  ComfyUI Directory: {}",
+            comfy_dir.display().to_string().bold()
+        );
         let audit = audit_comfyui(&comfy_dir);
         println!(
             "  Node Packs:        {}/{} installed",
@@ -352,11 +424,19 @@ fn run_install(args: InstallArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. Models if requested
     if args.models {
-        println!("\n{} Checking / downloading model files...", "==>".bold().green());
+        println!(
+            "\n{} Checking / downloading model files...",
+            "==>".bold().green()
+        );
         let models_dir = comfy_dir.join("models");
         for model in watertight::installer::MODEL_FILES {
             if let Err(e) = watertight::installer::download_model(&models_dir, model) {
-                eprintln!("  {} Failed to download {}: {}", "✗".red(), model.filename, e);
+                eprintln!(
+                    "  {} Failed to download {}: {}",
+                    "✗".red(),
+                    model.filename,
+                    e
+                );
             }
         }
     } else {
@@ -373,7 +453,10 @@ fn run_install(args: InstallArgs) -> Result<(), Box<dyn std::error::Error>> {
 fn run_workflows(args: WorkflowsArgs) -> Result<(), Box<dyn std::error::Error>> {
     match args.sub {
         WorkflowsSubcommand::List => {
-            println!("{}", "Embedded Authentic PixelArtistry Workflows:".bold().green());
+            println!(
+                "{}",
+                "Embedded Authentic PixelArtistry Workflows:".bold().green()
+            );
             for wf in get_all_workflows() {
                 println!(
                     "\n  {} {}\n     Description: {}\n     Target:      {}\n     JSON Size:   {} KB",
@@ -386,7 +469,11 @@ fn run_workflows(args: WorkflowsArgs) -> Result<(), Box<dyn std::error::Error>> 
             }
         }
         WorkflowsSubcommand::Export { dir } => {
-            println!("{} Exporting workflows to {}", "==>".bold().green(), dir.display());
+            println!(
+                "{} Exporting workflows to {}",
+                "==>".bold().green(),
+                dir.display()
+            );
             let count = export_all_workflows(&dir)?;
             println!("{} Successfully exported {} workflows.", "✓".green(), count);
         }

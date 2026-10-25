@@ -6,6 +6,7 @@
 //! Fork and complete native Rust implementation of the PixelArtistry ComfyUI Watertight
 //! pipeline (TRELLIS.2 / Pixal3D / MostAadTech WTiVo).
 
+pub mod close;
 pub mod decimate;
 pub mod env;
 pub mod error;
@@ -17,7 +18,10 @@ pub mod voxel;
 pub mod weld;
 pub mod workflows;
 
-pub use decimate::{decimate_mesh, decimate_with_options, DecimateOptions, DecimateReport, DecimationStats};
+pub use close::{close_surface, CloseReport};
+pub use decimate::{
+    decimate_mesh, decimate_with_options, DecimateOptions, DecimateReport, DecimationStats,
+};
 pub use env::{detect_hardware, EnvironmentInfo, HardwareProfile};
 pub use error::{Result, WatertightError};
 pub use hole_filler::{fill_holes, HoleFillReport, HoleFillerStats};
@@ -80,7 +84,8 @@ pub fn auto_repair(input_mesh: &Mesh, config: &RepairConfig) -> Result<(Mesh, Ve
         let (cleaned, removed_degen) = remove_degenerate_faces(&welded, 1e-12);
         log.push(format!(
             "Welded {} duplicate vertices; purged {} degenerate faces",
-            weld_stats.merged_vertices, removed_degen + weld_stats.degenerate_faces_removed
+            weld_stats.merged_vertices,
+            removed_degen + weld_stats.degenerate_faces_removed
         ));
         current_mesh = cleaned;
     }
@@ -118,7 +123,10 @@ pub fn auto_repair(input_mesh: &Mesh, config: &RepairConfig) -> Result<(Mesh, Ve
                 current_mesh.face_count()
             ));
         } else {
-            log.push("Mesh is already topologically watertight and manifold; skipping voxel remesh.".into());
+            log.push(
+                "Mesh is already topologically watertight and manifold; skipping voxel remesh."
+                    .into(),
+            );
         }
     }
 
@@ -170,7 +178,10 @@ mod tests {
         let (repaired, logs) = auto_repair(&cylinder, &config).expect("auto_repair failed");
         assert!(!logs.is_empty());
         let health = analyze_topology(&repaired);
-        assert!(health.is_watertight, "Repaired cylinder must be 100% watertight");
+        assert!(
+            health.is_watertight,
+            "Repaired cylinder must be 100% watertight"
+        );
         assert!(health.is_manifold);
         assert_eq!(health.boundary_edge_count, 0);
     }
@@ -189,7 +200,10 @@ mod tests {
         let (repaired, logs) = auto_repair(&tjunction, &config).expect("auto_repair failed");
         assert!(!logs.is_empty());
         let health = analyze_topology(&repaired);
-        assert!(health.is_watertight, "Non-manifold repair must yield watertight surface");
+        assert!(
+            health.is_watertight,
+            "Non-manifold repair must yield watertight surface"
+        );
         assert!(health.is_manifold);
         assert_eq!(health.non_manifold_edge_count, 0);
     }
@@ -211,5 +225,124 @@ mod tests {
         assert!(repaired.face_count() < orig_faces);
         assert!(repaired.face_count() <= 32);
     }
-}
 
+    fn vertex_matches(mesh: &Mesh, v: [f64; 3]) -> bool {
+        mesh.vertices.iter().any(|u| {
+            (u[0] - v[0]).abs() < 1e-12
+                && (u[1] - v[1]).abs() < 1e-12
+                && (u[2] - v[2]).abs() < 1e-12
+        })
+    }
+
+    #[test]
+    fn close_open_cylinder_keeps_wall_and_seals() {
+        let cylinder = Mesh::cylinder(1.0, 2.0, 16, false);
+        let (closed, report) = close_surface(&cylinder, 1e-4, true);
+        assert!(report.health.is_watertight);
+        assert!(report
+            .log
+            .iter()
+            .all(|line| !line.to_lowercase().contains("voxel")));
+        for v in &cylinder.vertices {
+            assert!(vertex_matches(&closed, *v), "wall vertex moved: {v:?}");
+        }
+    }
+
+    #[test]
+    fn close_cube_does_not_change_geometry() {
+        let cube = Mesh::cube(1.0);
+        let (closed, report) = close_surface(&cube, 1e-4, true);
+        assert!(report.health.is_watertight);
+        assert_eq!(closed.face_count(), cube.face_count());
+        assert_eq!(closed.vertices, cube.vertices);
+    }
+
+    #[test]
+    fn close_inverted_cube_flips_to_positive_volume() {
+        let cube = Mesh::cube(1.0);
+        let flipped: Vec<[usize; 3]> = cube.faces.iter().map(|f| [f[0], f[2], f[1]]).collect();
+        let inverted = Mesh::new(cube.vertices.clone(), flipped);
+        assert!(analyze_topology(&inverted).signed_volume < 0.0);
+        let (closed, report) = close_surface(&inverted, 1e-4, true);
+        assert!(report.health.signed_volume > 0.0);
+        assert!(report.health.is_watertight);
+        assert_eq!(closed.vertices, inverted.vertices);
+    }
+
+    #[test]
+    fn close_t_junction_clears_edge_without_making_a_solid() {
+        let junction = Mesh::non_manifold_t_junction();
+        let (closed, report) = close_surface(&junction, 1e-4, true);
+        assert_eq!(report.health.non_manifold_edge_count, 0);
+        assert!(!report.health.is_watertight);
+        assert!(report
+            .log
+            .iter()
+            .all(|line| !line.to_lowercase().contains("voxel")));
+        for v in &closed.vertices {
+            assert!(vertex_matches(&junction, *v), "close invented vertex {v:?}");
+        }
+    }
+
+    #[test]
+    fn close_open_cylinder_can_skip_hole_fill() {
+        let cylinder = Mesh::cylinder(1.0, 2.0, 16, false);
+        let (closed, report) = close_surface(&cylinder, 1e-4, false);
+        assert!(!report.health.is_watertight);
+        assert!(report.health.boundary_edge_count > 0);
+        assert_eq!(closed.face_count(), cylinder.face_count());
+    }
+
+    #[test]
+    fn close_pinched_cubes_splits_the_shared_vertex() {
+        let mut first = Mesh::cube(1.0);
+        let mut second = Mesh::cube(1.0);
+        for vertex in &mut second.vertices {
+            vertex[0] += 1.0;
+            vertex[1] += 1.0;
+            vertex[2] += 1.0;
+        }
+        let offset = first.vertices.len();
+        first.vertices.extend(second.vertices);
+        first.faces.extend(
+            second
+                .faces
+                .into_iter()
+                .map(|face| [face[0] + offset, face[1] + offset, face[2] + offset]),
+        );
+
+        let (closed, report) = close_surface(&first, 1e-4, true);
+        assert_eq!(report.health.non_manifold_vertex_count, 0);
+        assert!(report.health.is_watertight);
+        assert_eq!(closed.face_count(), 24);
+    }
+
+    #[test]
+    fn close_drops_a_loose_triangle_instead_of_doubling_it() {
+        let mut cube = Mesh::cube(1.0);
+        let base = cube.vertices.len();
+        cube.vertices
+            .extend([[3.0, 0.0, 0.0], [4.0, 0.0, 0.0], [3.5, 1.0, 0.0]]);
+        cube.faces.push([base, base + 1, base + 2]);
+
+        let (closed, report) = close_surface(&cube, 1e-4, true);
+        assert!(report.health.is_watertight, "{:?}", report.health);
+        assert_eq!(closed.face_count(), 12);
+        assert_eq!(closed.vertex_count(), 8);
+    }
+
+    #[test]
+    fn close_cube_with_fin_drops_fin_and_stays_watertight() {
+        let cube = Mesh::cube(1.0);
+        let mut finned = cube.clone();
+        finned.vertices.push([0.0, -2.0, 0.0]);
+        let tip = finned.vertices.len() - 1;
+        finned.faces.push([0, 1, tip]);
+        assert_eq!(analyze_topology(&finned).non_manifold_edge_count, 1);
+
+        let (closed, report) = close_surface(&finned, 1e-4, true);
+        assert!(report.health.is_watertight);
+        assert_eq!(closed.face_count(), cube.face_count());
+        assert_eq!(closed.vertices, cube.vertices);
+    }
+}

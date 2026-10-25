@@ -33,9 +33,15 @@ impl MeshHealthReport {
     /// Formats a clean, readable terminal diagnostic box.
     pub fn format_diagnostic(&self) -> String {
         let mut out = String::new();
-        out.push_str("╭────────────────────────────────────────────────────────────────────────────╮\n");
-        out.push_str("│ 🔍 Watertight Mesh Topological Health Report                               │\n");
-        out.push_str("╰────────────────────────────────────────────────────────────────────────────╯\n");
+        out.push_str(
+            "╭────────────────────────────────────────────────────────────────────────────╮\n",
+        );
+        out.push_str(
+            "│ 🔍 Watertight Mesh Topological Health Report                               │\n",
+        );
+        out.push_str(
+            "╰────────────────────────────────────────────────────────────────────────────╯\n",
+        );
 
         let status_str = if self.is_watertight {
             "✅ 100% WATERTIGHT (Clean 2-Manifold • 3D Printable • Game Ready)"
@@ -48,16 +54,28 @@ impl MeshHealthReport {
         };
 
         out.push_str(&format!("  Status:                   {}\n\n", status_str));
-        out.push_str(&format!("  • Vertices:               {}\n", self.vertex_count));
-        out.push_str(&format!("  • Triangles (Faces):      {}\n", self.face_count));
-        out.push_str(&format!("  • Edges:                  {}\n", self.edge_count));
+        out.push_str(&format!(
+            "  • Vertices:               {}\n",
+            self.vertex_count
+        ));
+        out.push_str(&format!(
+            "  • Triangles (Faces):      {}\n",
+            self.face_count
+        ));
+        out.push_str(&format!(
+            "  • Edges:                  {}\n",
+            self.edge_count
+        ));
         out.push_str(&format!(
             "  • Euler Characteristic:   χ = {} (V - E + F)\n",
             self.euler_characteristic
         ));
 
         if let Some(g) = self.genus {
-            out.push_str(&format!("  • Topological Genus:      g = {} (handles/holes)\n", g));
+            out.push_str(&format!(
+                "  • Topological Genus:      g = {} (handles/holes)\n",
+                g
+            ));
         }
 
         out.push_str(&format!(
@@ -96,7 +114,11 @@ impl MeshHealthReport {
         ));
         out.push_str(&format!(
             "  [{}] Positive Enclosed Volume (solid body)\n",
-            if self.signed_volume > 1e-9 { "✓" } else { "✗" }
+            if self.signed_volume > 1e-9 {
+                "✓"
+            } else {
+                "✗"
+            }
         ));
         out.push_str(&format!(
             "  [{}] 3D Slicer / Print Ready\n",
@@ -147,9 +169,8 @@ pub fn analyze_topology(mesh: &Mesh) -> MeshHealthReport {
 
     for (f_idx, &[i0, i1, i2]) in mesh.faces.iter().enumerate() {
         // Degenerate triangle check: out-of-range, duplicate vertex indices, or zero area
-        let out_of_range = i0 >= mesh.vertices.len()
-            || i1 >= mesh.vertices.len()
-            || i2 >= mesh.vertices.len();
+        let out_of_range =
+            i0 >= mesh.vertices.len() || i1 >= mesh.vertices.len() || i2 >= mesh.vertices.len();
         let is_idx_degenerate = i0 == i1 || i1 == i2 || i0 == i2;
         let is_area_degenerate = if !out_of_range && !is_idx_degenerate {
             let p0 = mesh.vertices[i0];
@@ -229,8 +250,7 @@ pub fn analyze_topology(mesh: &Mesh) -> MeshHealthReport {
         surface_area += area;
 
         // Signed volume of tetrahedron from origin = (1/6) * (p0 . (p1 x p2))
-        let det = p0[0] * (p1[1] * p2[2] - p1[2] * p2[1])
-            - p0[1] * (p1[0] * p2[2] - p1[2] * p2[0])
+        let det = p0[0] * (p1[1] * p2[2] - p1[2] * p2[1]) - p0[1] * (p1[0] * p2[2] - p1[2] * p2[0])
             + p0[2] * (p1[0] * p2[1] - p1[1] * p2[0]);
         signed_volume += det / 6.0;
     }
@@ -327,6 +347,17 @@ fn count_non_manifold_vertices(
     mesh: &Mesh,
     edge_to_faces: &HashMap<(usize, usize), Vec<usize>>,
 ) -> usize {
+    non_manifold_vertex_fans(mesh, edge_to_faces).len()
+}
+
+/// Fans at vertices where the faces do not form a single umbrella.
+///
+/// Each entry is `(vertex, components)`. `components[0]` stays on the original
+/// vertex. Later components are the extra sheets joined only at that vertex.
+pub(crate) fn non_manifold_vertex_fans(
+    mesh: &Mesh,
+    edge_to_faces: &HashMap<(usize, usize), Vec<usize>>,
+) -> Vec<(usize, Vec<Vec<usize>>)> {
     // Map vertex -> adjacent faces
     let mut vertex_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
     for (f_idx, &[i0, i1, i2]) in mesh.faces.iter().enumerate() {
@@ -335,7 +366,7 @@ fn count_non_manifold_vertices(
         vertex_to_faces.entry(i2).or_default().push(f_idx);
     }
 
-    let mut non_manifold_count = 0;
+    let mut fans = Vec::new();
 
     for (&v, faces) in &vertex_to_faces {
         if faces.len() < 2 {
@@ -361,7 +392,7 @@ fn count_non_manifold_vertices(
                     .filter(|x| tri2.contains(x))
                     .collect();
 
-                if shared_v.len() == 2 && shared_v.contains(&v) {
+                if shared_v.len() >= 2 && shared_v.contains(&v) {
                     let other = *shared_v.iter().find(|&&x| x != v).unwrap();
                     let canon = if v < other { (v, other) } else { (other, v) };
                     if let Some(edge_faces) = edge_to_faces.get(&canon) {
@@ -374,17 +405,17 @@ fn count_non_manifold_vertices(
             }
         }
 
-        // BFS / DFS to count connected components of faces
         let mut visited_faces = HashSet::new();
-        let mut components = 0;
+        let mut components = Vec::new();
 
         for &f in faces {
             if !visited_faces.contains(&f) {
-                components += 1;
+                let mut component = Vec::new();
                 let mut queue = vec![f];
                 visited_faces.insert(f);
 
                 while let Some(curr) = queue.pop() {
+                    component.push(curr);
                     if let Some(neighbors) = face_adj.get(&curr) {
                         for &n in neighbors {
                             if visited_faces.insert(n) {
@@ -393,15 +424,16 @@ fn count_non_manifold_vertices(
                         }
                     }
                 }
+                components.push(component);
             }
         }
 
-        if components > 1 {
-            non_manifold_count += 1;
+        if components.len() > 1 {
+            fans.push((v, components));
         }
     }
 
-    non_manifold_count
+    fans
 }
 
 #[cfg(test)]
@@ -437,7 +469,10 @@ mod tests {
         assert!(!report.is_watertight, "Uncapped cylinder is not watertight");
         assert_eq!(report.boundary_loop_count, 2); // Top and bottom circles
         assert_eq!(report.boundary_edge_count, 32); // 16 top + 16 bottom
-        assert!(report.is_manifold, "Uncapped cylinder is still a manifold with boundary");
+        assert!(
+            report.is_manifold,
+            "Uncapped cylinder is still a manifold with boundary"
+        );
     }
 
     #[test]
@@ -457,7 +492,10 @@ mod tests {
         let report = analyze_topology(&tjunction);
 
         assert!(!report.is_manifold, "T-junction must fail manifold check");
-        assert_eq!(report.non_manifold_edge_count, 1, "Must find exactly 1 non-manifold edge");
+        assert_eq!(
+            report.non_manifold_edge_count, 1,
+            "Must find exactly 1 non-manifold edge"
+        );
         assert!(!report.is_watertight);
     }
 
@@ -482,7 +520,10 @@ mod tests {
         assert!(report.is_manifold);
         assert!(report.has_inverted_normals);
         assert!(report.signed_volume < 0.0);
-        assert!(!report.is_watertight, "Inverted normal cube cannot be watertight");
+        assert!(
+            !report.is_watertight,
+            "Inverted normal cube cannot be watertight"
+        );
     }
 
     #[test]
@@ -504,7 +545,10 @@ mod tests {
         let faces = vec![[0, 1, 99]]; // index 99 out of range
         let mesh = Mesh::new(verts, faces);
         let report = analyze_topology(&mesh);
-        assert_eq!(report.degenerate_face_count, 1, "invalid face counted as degenerate");
+        assert_eq!(
+            report.degenerate_face_count, 1,
+            "invalid face counted as degenerate"
+        );
     }
 
     #[test]
@@ -515,7 +559,10 @@ mod tests {
         let mesh = Mesh::new(verts, faces);
         let report = analyze_topology(&mesh);
         assert_eq!(report.euler_characteristic, 0);
-        assert_eq!(report.genus, None, "genus is undefined for degenerate meshes");
+        assert_eq!(
+            report.genus, None,
+            "genus is undefined for degenerate meshes"
+        );
     }
 
     #[test]
@@ -532,4 +579,3 @@ mod tests {
         assert!(diag.contains("NON-SOLID"));
     }
 }
-

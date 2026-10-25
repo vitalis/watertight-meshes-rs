@@ -74,10 +74,18 @@ fn test_cli_workflows_export_command() {
         .expect("Failed to execute workflows export");
 
     assert!(output.status.success());
-    assert!(temp_dir.join("PixelArtistry_01_Image_to_Watertight_Mesh.json").exists());
-    assert!(temp_dir.join("PixelArtistry_01b_Image_to_Watertight_Mesh_2K.json").exists());
-    assert!(temp_dir.join("PixelArtistry_02_Image_to_GameReady_Asset.json").exists());
-    assert!(temp_dir.join("PixelArtistry_03_Your_Mesh_to_GameReady_Asset.json").exists());
+    assert!(temp_dir
+        .join("PixelArtistry_01_Image_to_Watertight_Mesh.json")
+        .exists());
+    assert!(temp_dir
+        .join("PixelArtistry_01b_Image_to_Watertight_Mesh_2K.json")
+        .exists());
+    assert!(temp_dir
+        .join("PixelArtistry_02_Image_to_GameReady_Asset.json")
+        .exists());
+    assert!(temp_dir
+        .join("PixelArtistry_03_Your_Mesh_to_GameReady_Asset.json")
+        .exists());
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
@@ -160,6 +168,90 @@ fn test_cli_mesh_pipeline_lifecycle() {
         .expect("Failed to execute decimate");
     assert!(decimate_out.status.success());
     assert!(decimated_path.exists());
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_cli_repair_without_remesh_keeps_surface_and_reports_failure() {
+    let bin = get_bin_path();
+    let temp_dir = std::env::temp_dir().join(format!("test_cli_close_{}", std::process::id()));
+    fs::create_dir_all(&temp_dir).unwrap();
+
+    let open_path = temp_dir.join("open.obj");
+    let open_out = temp_dir.join("open_closed.obj");
+    let junction_path = temp_dir.join("junction.obj");
+    let junction_out = temp_dir.join("junction_closed.obj");
+    let cube_path = temp_dir.join("cube.obj");
+    let cube_out = temp_dir.join("cube_closed.obj");
+
+    watertight::Mesh::cylinder(1.0, 2.0, 16, false)
+        .save(&open_path)
+        .unwrap();
+    let open_repair = Command::new(&bin)
+        .args([
+            "repair",
+            open_path.to_str().unwrap(),
+            "-o",
+            open_out.to_str().unwrap(),
+            "--no-remesh",
+        ])
+        .output()
+        .expect("repair --no-remesh open cylinder");
+    let open_stdout = String::from_utf8_lossy(&open_repair.stdout);
+    assert!(
+        open_repair.status.success(),
+        "open cylinder should seal without voxel: {open_stdout}"
+    );
+    assert!(
+        !open_stdout.to_lowercase().contains("voxel"),
+        "surface close logged voxel: {open_stdout}"
+    );
+
+    watertight::Mesh::non_manifold_t_junction()
+        .save(&junction_path)
+        .unwrap();
+    let junction_repair = Command::new(&bin)
+        .args([
+            "repair",
+            junction_path.to_str().unwrap(),
+            "-o",
+            junction_out.to_str().unwrap(),
+            "--no-remesh",
+        ])
+        .output()
+        .expect("repair --no-remesh t-junction");
+    let junction_stdout = String::from_utf8_lossy(&junction_repair.stdout);
+    assert!(
+        junction_out.exists(),
+        "patched mesh should still be written"
+    );
+    assert!(
+        !junction_repair.status.success(),
+        "flat t-junction is not a solid: {junction_stdout}"
+    );
+    assert!(!junction_stdout.to_lowercase().contains("voxel"));
+
+    watertight::Mesh::cube(1.0).save(&cube_path).unwrap();
+    let cube_repair = Command::new(&bin)
+        .args([
+            "repair",
+            cube_path.to_str().unwrap(),
+            "-o",
+            cube_out.to_str().unwrap(),
+            "--no-remesh",
+            "--target-faces",
+            "4",
+        ])
+        .output()
+        .expect("repair --no-remesh cube");
+    assert!(cube_repair.status.success());
+    let kept = watertight::Mesh::load(&cube_out).unwrap();
+    assert_eq!(
+        kept.face_count(),
+        12,
+        "surface close must ignore decimation"
+    );
 
     let _ = fs::remove_dir_all(&temp_dir);
 }
