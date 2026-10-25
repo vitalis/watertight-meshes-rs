@@ -112,10 +112,12 @@ pub fn merge_by_distance(mesh: &Mesh, distance: f64) -> (Mesh, WeldStats) {
 
     // Remap faces and remove degenerate triangles
     let mut new_faces: Vec<[usize; 3]> = Vec::with_capacity(mesh.faces.len());
+    let mut new_face_uvs = Vec::new();
+    let keep_uvs = mesh.face_uvs.len() == mesh.faces.len();
     // Canonical face tracker to remove exact duplicates and doubled back-to-back faces
     let mut seen_faces: HashMap<(usize, usize, usize), bool> = HashMap::new();
 
-    for &[i0, i1, i2] in &mesh.faces {
+    for (face_index, &[i0, i1, i2]) in mesh.faces.iter().enumerate() {
         let r0 = vertex_remap[i0];
         let r1 = vertex_remap[i1];
         let r2 = vertex_remap[i2];
@@ -156,6 +158,9 @@ pub fn merge_by_distance(mesh: &Mesh, distance: f64) -> (Mesh, WeldStats) {
 
         seen_faces.insert(key, true);
         new_faces.push([r0, r1, r2]);
+        if keep_uvs {
+            new_face_uvs.push(mesh.face_uvs[face_index]);
+        }
     }
 
     // Prune unused vertices and compact
@@ -186,6 +191,8 @@ pub fn merge_by_distance(mesh: &Mesh, distance: f64) -> (Mesh, WeldStats) {
     stats.final_faces = new_faces.len();
 
     let mut welded_mesh = Mesh::new(compacted_vertices, new_faces);
+    welded_mesh.face_uvs = new_face_uvs;
+    welded_mesh.base_color = mesh.base_color.clone();
     welded_mesh.compute_vertex_normals();
 
     (welded_mesh, stats)
@@ -234,17 +241,14 @@ mod tests {
     fn test_merge_duplicate_vertices() {
         // Two triangles that share an edge in space, but have duplicated vertices on the edge
         let vertices = vec![
-            [0.0, 0.0, 0.0], // 0
-            [1.0, 0.0, 0.0], // 1
-            [0.0, 1.0, 0.0], // 2
+            [0.0, 0.0, 0.0],     // 0
+            [1.0, 0.0, 0.0],     // 1
+            [0.0, 1.0, 0.0],     // 2
             [1.0, 0.0, 0.00001], // 3: duplicate of 1
             [0.0, 1.0, 0.00001], // 4: duplicate of 2
             [1.0, 1.0, 0.0],     // 5
         ];
-        let faces = vec![
-            [0, 1, 2],
-            [3, 5, 4],
-        ];
+        let faces = vec![[0, 1, 2], [3, 5, 4]];
 
         let mesh = Mesh::new(vertices, faces);
         assert_eq!(mesh.vertices.len(), 6);
@@ -273,11 +277,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_faces_removal() {
-        let vertices = vec![
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-        ];
+        let vertices = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
         // Duplicate triangle back-to-back
         let faces = vec![[0, 1, 2], [0, 2, 1]];
         let mesh = Mesh::new(vertices, faces);
@@ -294,4 +294,3 @@ mod tests {
         assert_eq!(stats.final_faces, 0);
     }
 }
-

@@ -76,8 +76,15 @@ pub fn close_surface(
 
     let mut health = analyze_topology(&current);
     if health.is_closed && health.is_manifold && health.signed_volume < -1e-9 {
-        for face in &mut current.faces {
-            face.swap(1, 2);
+        if current.face_uvs.len() == current.faces.len() {
+            for (face, uv) in current.faces.iter_mut().zip(current.face_uvs.iter_mut()) {
+                face.swap(1, 2);
+                uv.swap(1, 2);
+            }
+        } else {
+            for face in &mut current.faces {
+                face.swap(1, 2);
+            }
         }
         current.compute_vertex_normals();
         log.push("Flipped face winding to make signed volume positive".to_string());
@@ -116,6 +123,9 @@ fn reduce_non_manifold_edges(mesh: &mut Mesh) -> usize {
         let edge = crowded[0];
         let incident = counts[&edge].clone();
         let victim = choose_fin(&mesh.vertices, &mesh.faces, edge, &incident, &counts);
+        if mesh.face_uvs.len() == mesh.faces.len() {
+            mesh.face_uvs.remove(victim);
+        }
         mesh.faces.remove(victim);
         removed += 1;
     }
@@ -296,6 +306,15 @@ fn remove_lone_boundary_faces(mesh: &mut Mesh) -> usize {
         .filter(|(index, _)| !remove.contains(index))
         .map(|(_, face)| *face)
         .collect();
+    if mesh.face_uvs.len() == mesh.faces.len() {
+        mesh.face_uvs = mesh
+            .face_uvs
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !remove.contains(index))
+            .map(|(_, uv)| *uv)
+            .collect();
+    }
     mesh.faces = kept;
     compact_unused_vertices(mesh);
     remove.len()
@@ -354,6 +373,10 @@ fn compact_unused_vertices(mesh: &mut Mesh) {
         .iter()
         .map(|face| [remap[face[0]], remap[face[1]], remap[face[2]]])
         .collect();
+    let face_uvs = std::mem::take(&mut mesh.face_uvs);
+    let base_color = mesh.base_color.clone();
 
     *mesh = Mesh::new(vertices, faces);
+    mesh.face_uvs = face_uvs;
+    mesh.base_color = base_color;
 }

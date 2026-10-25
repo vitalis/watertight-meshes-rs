@@ -149,6 +149,39 @@ fn point_in_triangle(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool
     cross_ab >= -1e-12 && cross_bc >= -1e-12 && cross_ca >= -1e-12
 }
 
+fn uvs_for_face(mesh: &Mesh, face: [usize; 3]) -> [[f64; 2]; 3] {
+    [
+        uv_for_vertex(mesh, face[0]),
+        uv_for_vertex(mesh, face[1]),
+        uv_for_vertex(mesh, face[2]),
+    ]
+}
+
+fn uv_for_vertex(mesh: &Mesh, vertex: usize) -> [f64; 2] {
+    for (face, uvs) in mesh.faces.iter().zip(&mesh.face_uvs) {
+        for corner in 0..3 {
+            if face[corner] == vertex {
+                return uvs[corner];
+            }
+        }
+    }
+    [0.0, 0.0]
+}
+
+fn average_uvs(mesh: &Mesh, vertices: &[usize]) -> [f64; 2] {
+    if vertices.is_empty() {
+        return [0.0, 0.0];
+    }
+    let mut sum = [0.0, 0.0];
+    for &vertex in vertices {
+        let uv = uv_for_vertex(mesh, vertex);
+        sum[0] += uv[0];
+        sum[1] += uv[1];
+    }
+    let n = vertices.len() as f64;
+    [sum[0] / n, sum[1] / n]
+}
+
 /// Fills open boundary holes in the mesh to seal them.
 ///
 /// If `max_hole_vertices` is specified, only holes with at most this many vertices
@@ -178,6 +211,12 @@ pub fn fill_holes(mesh: &Mesh, max_hole_vertices: Option<usize>) -> (Mesh, HoleF
 
     let mut new_vertices = mesh.vertices.clone();
     let mut new_faces = mesh.faces.clone();
+    let keep_uvs = mesh.face_uvs.len() == mesh.faces.len();
+    let mut new_face_uvs = if keep_uvs {
+        mesh.face_uvs.clone()
+    } else {
+        Vec::new()
+    };
 
     for poly in loops {
         let n = poly.len();
@@ -193,7 +232,11 @@ pub fn fill_holes(mesh: &Mesh, max_hole_vertices: Option<usize>) -> (Mesh, HoleF
 
         if n == 3 {
             // Simple triangle hole
-            new_faces.push([poly[0], poly[1], poly[2]]);
+            let face = [poly[0], poly[1], poly[2]];
+            if keep_uvs {
+                new_face_uvs.push(uvs_for_face(mesh, face));
+            }
+            new_faces.push(face);
             stats.faces_added += 1;
             stats.holes_closed += 1;
         } else {
@@ -214,16 +257,26 @@ pub fn fill_holes(mesh: &Mesh, max_hole_vertices: Option<usize>) -> (Mesh, HoleF
                 let c_idx = new_vertices.len();
                 new_vertices.push(centroid);
                 stats.vertices_added += 1;
+                let centroid_uv = average_uvs(mesh, &poly);
 
                 // Connect centroid to each edge of boundary loop
                 for i in 0..n {
                     let v0 = poly[i];
                     let v1 = poly[(i + 1) % n];
-                    new_faces.push([v0, v1, c_idx]);
+                    let face = [v0, v1, c_idx];
+                    if keep_uvs {
+                        let mut corners = uvs_for_face(mesh, face);
+                        corners[2] = centroid_uv;
+                        new_face_uvs.push(corners);
+                    }
+                    new_faces.push(face);
                     stats.faces_added += 1;
                 }
             } else {
                 for t in tris {
+                    if keep_uvs {
+                        new_face_uvs.push(uvs_for_face(mesh, t));
+                    }
                     new_faces.push(t);
                     stats.faces_added += 1;
                 }
@@ -234,6 +287,8 @@ pub fn fill_holes(mesh: &Mesh, max_hole_vertices: Option<usize>) -> (Mesh, HoleF
     }
 
     let mut filled_mesh = Mesh::new(new_vertices, new_faces);
+    filled_mesh.face_uvs = new_face_uvs;
+    filled_mesh.base_color = mesh.base_color.clone();
     filled_mesh.compute_vertex_normals();
 
     (filled_mesh, stats)
@@ -258,7 +313,10 @@ mod tests {
 
         let after_rep = analyze_topology(&filled);
         assert!(after_rep.is_closed, "Filled cylinder must be closed");
-        assert!(after_rep.is_watertight, "Filled cylinder must be watertight");
+        assert!(
+            after_rep.is_watertight,
+            "Filled cylinder must be watertight"
+        );
     }
 
     #[test]
@@ -292,7 +350,11 @@ mod tests {
         ];
         let poly = vec![0, 1, 2, 3, 4, 5];
         let tris = triangulate_loop(&vertices, &poly);
-        assert_eq!(tris.len(), 4, "concave hexagon triangulates into n-2 = 4 triangles");
+        assert_eq!(
+            tris.len(),
+            4,
+            "concave hexagon triangulates into n-2 = 4 triangles"
+        );
         for t in &tris {
             let p0 = vertices[t[0]];
             let p1 = vertices[t[1]];
@@ -304,4 +366,3 @@ mod tests {
         }
     }
 }
-

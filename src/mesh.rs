@@ -6,6 +6,12 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::Path;
 
+fn pad_bin(bin: &mut Vec<u8>) {
+    while bin.len() % 4 != 0 {
+        bin.push(0);
+    }
+}
+
 /// 3D Axis-Aligned Bounding Box
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Aabb {
@@ -72,6 +78,13 @@ pub type Vector3 = [f64; 3];
 /// Triangular face index triplet
 pub type Face = [usize; 3];
 
+/// Encoded base-color image copied out of a source GLB.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BaseColorImage {
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
+}
+
 /// Triangular 3D Mesh
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mesh {
@@ -79,6 +92,9 @@ pub struct Mesh {
     pub faces: Vec<[usize; 3]>,
     pub normals: Vec<[f64; 3]>,
     pub uvs: Vec<[f64; 2]>,
+    /// One UV triplet per face, in the same corner order as `faces`.
+    pub face_uvs: Vec<[[f64; 2]; 3]>,
+    pub base_color: Option<BaseColorImage>,
 }
 
 impl Mesh {
@@ -88,6 +104,8 @@ impl Mesh {
             faces,
             normals: Vec::new(),
             uvs: Vec::new(),
+            face_uvs: Vec::new(),
+            base_color: None,
         };
         mesh.compute_vertex_normals();
         mesh
@@ -564,6 +582,9 @@ impl Mesh {
 
         let mut vertices: Vec<[f64; 3]> = Vec::new();
         let mut faces: Vec<[usize; 3]> = Vec::new();
+        let mut uvs: Vec<[f64; 2]> = Vec::new();
+        let mut uvs_complete = true;
+        let mut base_color = None;
 
         for mesh in gltf.document.meshes() {
             for primitive in mesh.primitives() {
@@ -582,9 +603,26 @@ impl Mesh {
                     })?
                     .collect();
                 let base = vertices.len();
-                vertices.extend(positions.iter().map(|p| {
-                    [p[0] as f64, p[1] as f64, p[2] as f64]
-                }));
+                vertices.extend(
+                    positions
+                        .iter()
+                        .map(|p| [p[0] as f64, p[1] as f64, p[2] as f64]),
+                );
+
+                if let Some(coords) = reader.read_tex_coords(0) {
+                    let coords: Vec<[f32; 2]> = coords.into_f32().collect();
+                    if coords.len() == positions.len() {
+                        uvs.extend(coords.iter().map(|c| [c[0] as f64, c[1] as f64]));
+                    } else {
+                        uvs_complete = false;
+                    }
+                } else {
+                    uvs_complete = false;
+                }
+
+                if base_color.is_none() {
+                    base_color = Self::read_base_color(&primitive, blob);
+                }
 
                 if let Some(indices) = reader.read_indices() {
                     let idx: Vec<u32> = match indices {
@@ -612,16 +650,48 @@ impl Mesh {
             }
         }
 
-        Ok(Mesh::new(vertices, faces))
+        let mut mesh = Mesh::new(vertices, faces);
+        if uvs_complete && uvs.len() == mesh.vertices.len() && !uvs.is_empty() {
+            mesh.face_uvs = mesh
+                .faces
+                .iter()
+                .map(|face| [uvs[face[0]], uvs[face[1]], uvs[face[2]]])
+                .collect();
+        }
+        mesh.base_color = base_color;
+        Ok(mesh)
+    }
+
+    fn read_base_color(primitive: &gltf::Primitive<'_>, blob: &[u8]) -> Option<BaseColorImage> {
+        let info = primitive
+            .material()
+            .pbr_metallic_roughness()
+            .base_color_texture()?;
+        match info.texture().source().source() {
+            gltf::image::Source::View { view, mime_type } => {
+                let start = view.offset();
+                let end = start.checked_add(view.length())?;
+                let bytes = blob.get(start..end)?.to_vec();
+                Some(BaseColorImage {
+                    mime_type: mime_type.to_string(),
+                    bytes,
+                })
+            }
+            gltf::image::Source::Uri { .. } => None,
+        }
     }
 
     /// Serialize the mesh to a GLB (binary glTF) byte buffer.
+    ///
+    /// Face-corner UVs are exported as TEXCOORD_0. A welded vertex that carries
+    /// more than one UV is written once per UV so the texture stays put.
     pub fn to_glb(&self) -> Result<Vec<u8>> {
-        // Pack positions (f32 x3) then indices (u32 x3) into the binary chunk.
-        let mut bin = Vec::with_capacity(self.vertices.len() * 12 + self.faces.len() * 12);
+        let (vertices, uvs, faces) = self.glb_vertices();
+
+        let mut bin = Vec::with_capacity(vertices.len() * 12 + uvs.len() * 8 + faces.len() * 12);
         let mut min = [f64::INFINITY; 3];
         let mut max = [f64::NEG_INFINITY; 3];
-        for v in &self.vertices {
+        for v in &vertices {
             bin.extend_from_slice(&(v[0] as f32).to_le_bytes());
             bin.extend_from_slice(&(v[1] as f32).to_le_bytes());
             bin.extend_from_slice(&(v[2] as f32).to_le_bytes());
@@ -630,41 +700,130 @@ impl Mesh {
                 max[k] = max[k].max(v[k]);
             }
         }
-        let pos_bytes = self.vertices.len() * 12;
-        for f in &self.faces {
+        let pos_bytes = vertices.len() * 12;
+        pad_bin(&mut bin);
+
+        let uv_offset = bin.len();
+        for uv in &uvs {
+            bin.extend_from_slice(&(uv[0] as f32).to_le_bytes());
+            bin.extend_from_slice(&(uv[1] as f32).to_le_bytes());
+        }
+        let uv_bytes = uvs.len() * 8;
+        pad_bin(&mut bin);
+
+        let idx_offset = bin.len();
+        for f in &faces {
             for &idx in f {
                 bin.extend_from_slice(&(idx as u32).to_le_bytes());
             }
         }
-        let idx_bytes = self.faces.len() * 12;
+        let idx_bytes = faces.len() * 12;
+        pad_bin(&mut bin);
+
+        let image_offset = bin.len();
+        let image_bytes = self
+            .base_color
+            .as_ref()
+            .map(|image| image.bytes.len())
+            .unwrap_or(0);
+        if let Some(image) = &self.base_color {
+            bin.extend_from_slice(&image.bytes);
+        }
+        pad_bin(&mut bin);
 
         let mut position_accessor = serde_json::json!({
             "bufferView": 0,
             "componentType": 5126,
-            "count": self.vertices.len(),
+            "count": vertices.len(),
             "type": "VEC3"
         });
-        if !self.vertices.is_empty() {
+        if !vertices.is_empty() {
             position_accessor["min"] = serde_json::json!([min[0], min[1], min[2]]);
             position_accessor["max"] = serde_json::json!([max[0], max[1], max[2]]);
         }
 
-        let json = serde_json::json!({
+        let mut attributes = serde_json::json!({"POSITION": 0});
+        let mut buffer_views = vec![serde_json::json!({
+            "buffer": 0,
+            "byteOffset": 0,
+            "byteLength": pos_bytes,
+            "target": 34962
+        })];
+        let mut accessors = vec![position_accessor];
+        let mut next_view = 1;
+
+        if !uvs.is_empty() {
+            attributes["TEXCOORD_0"] = serde_json::json!(next_view);
+            buffer_views.push(serde_json::json!({
+                "buffer": 0,
+                "byteOffset": uv_offset,
+                "byteLength": uv_bytes,
+                "target": 34962
+            }));
+            accessors.push(serde_json::json!({
+                "bufferView": next_view,
+                "componentType": 5126,
+                "count": uvs.len(),
+                "type": "VEC2"
+            }));
+            next_view += 1;
+        }
+
+        let index_view = next_view;
+        buffer_views.push(serde_json::json!({
+            "buffer": 0,
+            "byteOffset": idx_offset,
+            "byteLength": idx_bytes,
+            "target": 34963
+        }));
+        accessors.push(serde_json::json!({
+            "bufferView": index_view,
+            "componentType": 5125,
+            "count": faces.len() * 3,
+            "type": "SCALAR"
+        }));
+        next_view += 1;
+
+        let mut primitive = serde_json::json!({
+            "attributes": attributes,
+            "indices": index_view,
+            "mode": 4
+        });
+        let mut images = serde_json::json!([]);
+        let mut textures = serde_json::json!([]);
+        let mut materials = serde_json::json!([]);
+        if let Some(image) = &self.base_color {
+            buffer_views.push(serde_json::json!({
+                "buffer": 0,
+                "byteOffset": image_offset,
+                "byteLength": image_bytes
+            }));
+            images = serde_json::json!([{
+                "bufferView": next_view,
+                "mimeType": image.mime_type
+            }]);
+            textures = serde_json::json!([{"source": 0}]);
+            materials = serde_json::json!([{
+                "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}
+            }]);
+            primitive["material"] = serde_json::json!(0);
+        }
+
+        let mut json = serde_json::json!({
             "asset": {"version": "2.0"},
             "scene": 0,
             "scenes": [{"nodes": [0]}],
             "nodes": [{"mesh": 0}],
-            "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "mode": 4}]}],
+            "meshes": [{"primitives": [primitive]}],
             "buffers": [{"byteLength": bin.len()}],
-            "bufferViews": [
-                {"buffer": 0, "byteOffset": 0, "byteLength": pos_bytes, "target": 34962},
-                {"buffer": 0, "byteOffset": pos_bytes, "byteLength": idx_bytes, "target": 34963}
-            ],
-            "accessors": [
-                position_accessor,
-                {"bufferView": 1, "componentType": 5125, "count": self.faces.len() * 3, "type": "SCALAR"}
-            ]
+            "bufferViews": buffer_views,
+            "accessors": accessors
         });
+        if image_bytes > 0 {
+            json["images"] = images;
+            json["textures"] = textures;
+            json["materials"] = materials;
+        }
 
         let json_bytes = serde_json::to_vec(&json)?;
 
@@ -691,6 +850,46 @@ impl Mesh {
         }
 
         Ok(out)
+    }
+
+    /// Positions, UVs, and faces for GLB export. Corner UVs split a shared vertex.
+    fn glb_vertices(&self) -> (Vec<[f64; 3]>, Vec<[f64; 2]>, Vec<[usize; 3]>) {
+        if self.face_uvs.len() != self.faces.len() {
+            return (self.vertices.clone(), Vec::new(), self.faces.clone());
+        }
+
+        let mut key_to_index: std::collections::HashMap<(usize, u64, u64), usize> =
+            std::collections::HashMap::new();
+        let mut vertices = Vec::new();
+        let mut uvs = Vec::new();
+        let mut faces = Vec::with_capacity(self.faces.len());
+
+        for (face, corners) in self.faces.iter().zip(&self.face_uvs) {
+            let mut exported = [0; 3];
+            for corner in 0..3 {
+                let uv = corners[corner];
+                let key = (face[corner], uv[0].to_bits(), uv[1].to_bits());
+                let index = if let Some(&existing) = key_to_index.get(&key) {
+                    existing
+                } else {
+                    let index = vertices.len();
+                    let source = face[corner];
+                    vertices.push(
+                        self.vertices
+                            .get(source)
+                            .copied()
+                            .unwrap_or([0.0, 0.0, 0.0]),
+                    );
+                    uvs.push(uv);
+                    key_to_index.insert(key, index);
+                    index
+                };
+                exported[corner] = index;
+            }
+            faces.push(exported);
+        }
+
+        (vertices, uvs, faces)
     }
 
     // -------------------------------------------------------------
@@ -786,11 +985,11 @@ impl Mesh {
     /// Generates a known non-manifold T-junction (3 faces sharing an edge).
     pub fn non_manifold_t_junction() -> Self {
         let vertices = vec![
-            [0.0, 0.0, 0.0], // 0: bottom of shared edge
-            [0.0, 1.0, 0.0], // 1: top of shared edge
-            [1.0, 0.5, 0.0], // 2: wing 1
+            [0.0, 0.0, 0.0],  // 0: bottom of shared edge
+            [0.0, 1.0, 0.0],  // 1: top of shared edge
+            [1.0, 0.5, 0.0],  // 2: wing 1
             [-1.0, 0.5, 0.0], // 3: wing 2
-            [0.0, 0.5, 1.0], // 4: wing 3
+            [0.0, 0.5, 1.0],  // 4: wing 3
         ];
         let faces = vec![
             [0, 1, 2], // Face 1 shares (0, 1)
@@ -923,7 +1122,48 @@ mod tests {
         let data = b"ply\nformat ascii 1.0\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n1 1 0\n0 1 0\n4 0 1 2 3\n";
         let reader = std::io::BufReader::new(std::io::Cursor::new(&data[..]));
         let mesh = Mesh::from_ply(reader).expect("parse quad");
-        assert_eq!(mesh.face_count(), 2, "quad must fan-triangulate into 2 triangles");
+        assert_eq!(
+            mesh.face_count(),
+            2,
+            "quad must fan-triangulate into 2 triangles"
+        );
+    }
+
+    #[test]
+    fn test_glb_roundtrip_keeps_corner_uvs_and_base_color() {
+        use crate::close_surface;
+
+        let mut mesh = Mesh::new(
+            vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0],
+            ],
+            vec![[0, 1, 2], [4, 2, 3]],
+        );
+        mesh.face_uvs = vec![
+            [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+            [[0.25, 0.5], [1.0, 1.0], [0.0, 1.0]],
+        ];
+        mesh.base_color = Some(BaseColorImage {
+            mime_type: "image/png".into(),
+            bytes: b"not-a-real-png".to_vec(),
+        });
+
+        let loaded = Mesh::from_glb(&mesh.to_glb().unwrap()).unwrap();
+        assert_eq!(loaded.face_uvs, mesh.face_uvs);
+        assert_eq!(loaded.base_color.unwrap().bytes, b"not-a-real-png");
+
+        let (closed, _) = close_surface(&mesh, 1e-4, false);
+        let reloaded = Mesh::from_glb(&closed.to_glb().unwrap()).unwrap();
+        assert_eq!(reloaded.base_color.unwrap().bytes, b"not-a-real-png");
+        assert!(reloaded
+            .face_uvs
+            .iter()
+            .flatten()
+            .any(|uv| { (uv[0] - 0.25).abs() < 1e-5 && (uv[1] - 0.5).abs() < 1e-5 }));
     }
 
     #[test]
@@ -940,5 +1180,3 @@ mod tests {
         let _ = fs::remove_file(temp_path);
     }
 }
-
-
