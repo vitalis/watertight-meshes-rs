@@ -683,8 +683,8 @@ impl Mesh {
 
     /// Serialize the mesh to a GLB (binary glTF) byte buffer.
     ///
-    /// Face-corner UVs are exported as TEXCOORD_0. A welded vertex that carries
-    /// more than one UV is written once per UV so the texture stays put.
+    /// Face-corner UVs are exported as one TEXCOORD_0 value per vertex. The
+    /// vertex indices are not split, so a welded mesh stays welded.
     pub fn to_glb(&self) -> Result<Vec<u8>> {
         let (vertices, uvs, faces) = self.glb_vertices();
 
@@ -852,44 +852,28 @@ impl Mesh {
         Ok(out)
     }
 
-    /// Positions, UVs, and faces for GLB export. Corner UVs split a shared vertex.
+    /// Positions, UVs, and faces for GLB export.
+    ///
+    /// Uses the mesh's own vertex indices. Splitting a vertex per UV would
+    /// reopen the seams the close just welded, so a vertex keeps one UV.
     fn glb_vertices(&self) -> (Vec<[f64; 3]>, Vec<[f64; 2]>, Vec<[usize; 3]>) {
         if self.face_uvs.len() != self.faces.len() {
             return (self.vertices.clone(), Vec::new(), self.faces.clone());
         }
 
-        let mut key_to_index: std::collections::HashMap<(usize, u64, u64), usize> =
-            std::collections::HashMap::new();
-        let mut vertices = Vec::new();
-        let mut uvs = Vec::new();
-        let mut faces = Vec::with_capacity(self.faces.len());
-
+        let mut uvs = vec![[0.0, 0.0]; self.vertices.len()];
+        let mut written = vec![false; self.vertices.len()];
         for (face, corners) in self.faces.iter().zip(&self.face_uvs) {
-            let mut exported = [0; 3];
             for corner in 0..3 {
-                let uv = corners[corner];
-                let key = (face[corner], uv[0].to_bits(), uv[1].to_bits());
-                let index = if let Some(&existing) = key_to_index.get(&key) {
-                    existing
-                } else {
-                    let index = vertices.len();
-                    let source = face[corner];
-                    vertices.push(
-                        self.vertices
-                            .get(source)
-                            .copied()
-                            .unwrap_or([0.0, 0.0, 0.0]),
-                    );
-                    uvs.push(uv);
-                    key_to_index.insert(key, index);
-                    index
-                };
-                exported[corner] = index;
+                let index = face[corner];
+                if index < uvs.len() && !written[index] {
+                    uvs[index] = corners[corner];
+                    written[index] = true;
+                }
             }
-            faces.push(exported);
         }
 
-        (vertices, uvs, faces)
+        (self.vertices.clone(), uvs, self.faces.clone())
     }
 
     // -------------------------------------------------------------
@@ -1158,12 +1142,40 @@ mod tests {
 
         let (closed, _) = close_surface(&mesh, 1e-4, false);
         let reloaded = Mesh::from_glb(&closed.to_glb().unwrap()).unwrap();
+        assert_eq!(
+            reloaded.vertex_count(),
+            closed.vertex_count(),
+            "welded vertices must stay welded in the GLB"
+        );
+        assert_eq!(reloaded.face_count(), closed.face_count());
         assert_eq!(reloaded.base_color.unwrap().bytes, b"not-a-real-png");
-        assert!(reloaded
-            .face_uvs
-            .iter()
-            .flatten()
-            .any(|uv| { (uv[0] - 0.25).abs() < 1e-5 && (uv[1] - 0.5).abs() < 1e-5 }));
+    }
+
+    #[test]
+    fn test_glb_export_keeps_a_watertight_cube_when_corner_uvs_disagree() {
+        use crate::topology::analyze_topology;
+
+        let mut mesh = Mesh::cube(1.0);
+        let mut face_uvs = Vec::new();
+        for (face_index, face) in mesh.faces.iter().enumerate() {
+            let chart = if face_index % 2 == 0 { 0.0 } else { 0.5 };
+            let mut corners = [[0.0, 0.0]; 3];
+            for (corner, &vertex) in face.iter().enumerate() {
+                corners[corner] = [chart + vertex as f64 * 0.01, corner as f64 * 0.1];
+            }
+            face_uvs.push(corners);
+        }
+        mesh.face_uvs = face_uvs;
+        assert!(analyze_topology(&mesh).is_watertight);
+
+        let loaded = Mesh::from_glb(&mesh.to_glb().unwrap()).unwrap();
+        assert_eq!(loaded.vertex_count(), mesh.vertex_count());
+        assert_eq!(loaded.face_count(), mesh.face_count());
+        let report = analyze_topology(&loaded);
+        assert!(
+            report.is_watertight,
+            "disagreeing corner UVs must not reopen the exported mesh"
+        );
     }
 
     #[test]
