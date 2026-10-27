@@ -106,7 +106,7 @@ Options:
 - `--res <INT>`: Voxel bounding grid resolution (default: `128`)
 - `--target-faces <INT>`: Decimate output to target polygon count (optional)
 - `--no-fill-holes`: Skip topological boundary filling
-- `--no-remesh`: Close on the original surface (weld, fin drop, hole fill) and skip Marching Cubes. Writes the mesh either way. Exits non-zero when it is still not watertight. Ignores `--target-faces`.
+- `--no-remesh`: Close on the original surface (weld, fin drop, hole fill) and skip Marching Cubes. Writes the mesh either way. Exits non-zero when it is still not watertight. Ignores `--target-faces`. When a welded vertex has more than one UV, a PNG base color is sampled into vertex colors and the UV map is left out of the GLB.
 
 ---
 

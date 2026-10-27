@@ -12,6 +12,75 @@ fn pad_bin(bin: &mut Vec<u8>) {
     }
 }
 
+fn triangle_area(vertices: &[[f64; 3]], face: [usize; 3]) -> f64 {
+    let Some(a) = vertices.get(face[0]) else {
+        return 0.0;
+    };
+    let Some(b) = vertices.get(face[1]) else {
+        return 0.0;
+    };
+    let Some(c) = vertices.get(face[2]) else {
+        return 0.0;
+    };
+    let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    let cross = [
+        ab[1] * ac[2] - ab[2] * ac[1],
+        ab[2] * ac[0] - ab[0] * ac[2],
+        ab[0] * ac[1] - ab[1] * ac[0],
+    ];
+    0.5 * (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt()
+}
+
+fn decode_png_rgb(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder.read_info().ok()?;
+    let mut pixels = vec![0; reader.output_buffer_size()];
+    let frame = reader.next_frame(&mut pixels).ok()?;
+    if frame.bit_depth != png::BitDepth::Eight || frame.width == 0 || frame.height == 0 {
+        return None;
+    }
+    pixels.truncate(frame.buffer_size());
+    let rgb = match frame.color_type {
+        png::ColorType::Rgb => pixels,
+        png::ColorType::Rgba => pixels.chunks(4).flat_map(|p| [p[0], p[1], p[2]]).collect(),
+        png::ColorType::Grayscale => pixels.iter().flat_map(|&g| [g, g, g]).collect(),
+        png::ColorType::GrayscaleAlpha => {
+            pixels.chunks(2).flat_map(|p| [p[0], p[0], p[0]]).collect()
+        }
+        png::ColorType::Indexed => return None,
+    };
+    let expected = (frame.width as usize)
+        .checked_mul(frame.height as usize)?
+        .checked_mul(3)?;
+    if rgb.len() < expected {
+        return None;
+    }
+    Some((frame.width, frame.height, rgb))
+}
+
+fn sample_rgb(pixels: &[u8], width: u32, height: u32, uv: [f64; 2]) -> [f64; 3] {
+    let u = uv[0].clamp(0.0, 1.0);
+    let v = uv[1].clamp(0.0, 1.0);
+    let x = (u * (width as f64 - 1.0))
+        .round()
+        .clamp(0.0, (width - 1) as f64) as u32;
+    let y = ((1.0 - v) * (height as f64 - 1.0))
+        .round()
+        .clamp(0.0, (height - 1) as f64) as u32;
+    texel(pixels, width, x, y)
+}
+
+fn texel(pixels: &[u8], width: u32, x: u32, y: u32) -> [f64; 3] {
+    let index = ((y * width + x) * 3) as usize;
+    [
+        f64::from(pixels[index]),
+        f64::from(pixels[index + 1]),
+        f64::from(pixels[index + 2]),
+    ]
+}
+
 /// 3D Axis-Aligned Bounding Box
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Aabb {
@@ -681,12 +750,108 @@ impl Mesh {
         }
     }
 
+    /// True when GLB export will sample the base-color PNG into vertex colors.
+    ///
+    /// A welded vertex can carry several corner UVs. Writing one of them would
+    /// streak the texture, and splitting the vertex would reopen the mesh.
+    pub fn bakes_vertex_colors(&self) -> bool {
+        self.baked_vertex_colors().is_some()
+    }
+
+    /// Vertex colors sampled from the largest face at each corner.
+    ///
+    /// `None` when every vertex has one UV, or when the base color is not a
+    /// decodable PNG. Callers then keep TEXCOORD_0.
+    fn baked_vertex_colors(&self) -> Option<Vec<[u8; 3]>> {
+        if self.face_uvs.len() != self.faces.len() || !self.corner_uvs_disagree() {
+            return None;
+        }
+        let image = self.base_color.as_ref()?;
+        if !image.mime_type.eq_ignore_ascii_case("image/png") {
+            return None;
+        }
+        let (width, height, pixels) = decode_png_rgb(&image.bytes)?;
+        let mut best_area = vec![0.0; self.vertices.len()];
+        let mut acc = vec![[0.0; 3]; self.vertices.len()];
+        let mut weight = vec![0.0; self.vertices.len()];
+        for (face, corners) in self.faces.iter().zip(&self.face_uvs) {
+            let area = triangle_area(&self.vertices, *face);
+            if area <= 1e-20 {
+                continue;
+            }
+            for corner in 0..3 {
+                let index = face[corner];
+                if index >= acc.len() {
+                    continue;
+                }
+                // Equal areas share the vertex, so average those samples.
+                // A smaller face must not pull the color toward another island.
+                if area + 1e-12 < best_area[index] {
+                    continue;
+                }
+                if area > best_area[index] + 1e-12 {
+                    best_area[index] = area;
+                    acc[index] = [0.0; 3];
+                    weight[index] = 0.0;
+                }
+                let sample = sample_rgb(&pixels, width, height, corners[corner]);
+                for channel in 0..3 {
+                    acc[index][channel] += sample[channel];
+                }
+                weight[index] += 1.0;
+            }
+        }
+        Some(
+            weight
+                .iter()
+                .zip(&acc)
+                .map(|(w, rgb)| {
+                    if *w <= 0.0 {
+                        [255, 255, 255]
+                    } else {
+                        let mut out = [0; 3];
+                        for channel in 0..3 {
+                            out[channel] = (rgb[channel] / w).round().clamp(0.0, 255.0) as u8;
+                        }
+                        out
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    fn corner_uvs_disagree(&self) -> bool {
+        let mut first = vec![None; self.vertices.len()];
+        for (face, corners) in self.faces.iter().zip(&self.face_uvs) {
+            for corner in 0..3 {
+                let index = face[corner];
+                if index >= first.len() {
+                    continue;
+                }
+                match first[index] {
+                    None => first[index] = Some(corners[corner]),
+                    Some(prev) => {
+                        let uv = corners[corner];
+                        if (prev[0] - uv[0]).abs() > 1e-4 || (prev[1] - uv[1]).abs() > 1e-4 {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Serialize the mesh to a GLB (binary glTF) byte buffer.
     ///
-    /// Face-corner UVs are exported as one TEXCOORD_0 value per vertex. The
-    /// vertex indices are not split, so a welded mesh stays welded.
+    /// Vertex indices are not split. When corner UVs disagree, the base-color
+    /// PNG is sampled into COLOR_0 and the UV map is omitted.
     pub fn to_glb(&self) -> Result<Vec<u8>> {
-        let (vertices, uvs, faces) = self.glb_vertices();
+        let (vertices, mut uvs, faces) = self.glb_vertices();
+        let vertex_colors = self.baked_vertex_colors();
+        if vertex_colors.is_some() {
+            uvs.clear();
+        }
 
         let mut bin = Vec::with_capacity(vertices.len() * 12 + uvs.len() * 8 + faces.len() * 12);
         let mut min = [f64::INFINITY; 3];
@@ -701,6 +866,17 @@ impl Mesh {
             }
         }
         let pos_bytes = vertices.len() * 12;
+        pad_bin(&mut bin);
+
+        let color_offset = bin.len();
+        let color_bytes = if let Some(colors) = &vertex_colors {
+            for rgb in colors {
+                bin.extend_from_slice(rgb);
+            }
+            colors.len() * 3
+        } else {
+            0
+        };
         pad_bin(&mut bin);
 
         let uv_offset = bin.len();
@@ -721,13 +897,18 @@ impl Mesh {
         pad_bin(&mut bin);
 
         let image_offset = bin.len();
-        let image_bytes = self
-            .base_color
-            .as_ref()
-            .map(|image| image.bytes.len())
-            .unwrap_or(0);
-        if let Some(image) = &self.base_color {
-            bin.extend_from_slice(&image.bytes);
+        let image_bytes = if vertex_colors.is_none() {
+            self.base_color
+                .as_ref()
+                .map(|image| image.bytes.len())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        if image_bytes > 0 {
+            if let Some(image) = &self.base_color {
+                bin.extend_from_slice(&image.bytes);
+            }
         }
         pad_bin(&mut bin);
 
@@ -751,6 +932,24 @@ impl Mesh {
         })];
         let mut accessors = vec![position_accessor];
         let mut next_view = 1;
+
+        if color_bytes > 0 {
+            attributes["COLOR_0"] = serde_json::json!(next_view);
+            buffer_views.push(serde_json::json!({
+                "buffer": 0,
+                "byteOffset": color_offset,
+                "byteLength": color_bytes,
+                "target": 34962
+            }));
+            accessors.push(serde_json::json!({
+                "bufferView": next_view,
+                "componentType": 5121,
+                "count": vertices.len(),
+                "normalized": true,
+                "type": "VEC3"
+            }));
+            next_view += 1;
+        }
 
         if !uvs.is_empty() {
             attributes["TEXCOORD_0"] = serde_json::json!(next_view);
@@ -792,7 +991,17 @@ impl Mesh {
         let mut images = serde_json::json!([]);
         let mut textures = serde_json::json!([]);
         let mut materials = serde_json::json!([]);
-        if let Some(image) = &self.base_color {
+        if vertex_colors.is_some() {
+            materials = serde_json::json!([{
+                "doubleSided": true,
+                "pbrMetallicRoughness": {
+                    "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+                    "metallicFactor": 0.0,
+                    "roughnessFactor": 1.0
+                }
+            }]);
+            primitive["material"] = serde_json::json!(0);
+        } else if let Some(image) = &self.base_color {
             buffer_views.push(serde_json::json!({
                 "buffer": 0,
                 "byteOffset": image_offset,
@@ -819,7 +1028,9 @@ impl Mesh {
             "bufferViews": buffer_views,
             "accessors": accessors
         });
-        if image_bytes > 0 {
+        if vertex_colors.is_some() {
+            json["materials"] = materials;
+        } else if image_bytes > 0 {
             json["images"] = images;
             json["textures"] = textures;
             json["materials"] = materials;
@@ -1176,6 +1387,114 @@ mod tests {
             report.is_watertight,
             "disagreeing corner UVs must not reopen the exported mesh"
         );
+    }
+
+    #[test]
+    fn test_glb_bakes_disagreeing_uvs_into_vertex_colors() {
+        use crate::topology::analyze_topology;
+
+        let mut mesh = Mesh::new(
+            vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [1.0, 1.0, 0.0],
+            ],
+            vec![[0, 1, 2], [1, 3, 2]],
+        );
+        mesh.face_uvs = vec![
+            [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
+            [[1.0, 1.0], [1.0, 1.0], [0.0, 0.0]],
+        ];
+        mesh.base_color = Some(BaseColorImage {
+            mime_type: "image/png".into(),
+            bytes: encode_png(
+                2,
+                2,
+                &[
+                    255, 0, 0, 0, 255, 0, //
+                    0, 0, 255, 255, 255, 255,
+                ],
+            ),
+        });
+
+        let glb = mesh.to_glb().unwrap();
+        let doc = glb_json(&glb);
+        let attributes = &doc["meshes"][0]["primitives"][0]["attributes"];
+        assert!(attributes.get("TEXCOORD_0").is_none());
+        assert!(doc.get("images").is_none());
+        assert_eq!(
+            doc["materials"][0]["pbrMetallicRoughness"]["metallicFactor"],
+            0.0
+        );
+        let colors = color_bytes(&glb, &doc);
+        assert_eq!(&colors[0..3], &[0, 0, 255]);
+        assert_eq!(&colors[3..6], &[0, 128, 128]);
+        assert_eq!(&colors[6..9], &[0, 0, 255]);
+        assert_eq!(&colors[9..12], &[0, 255, 0]);
+
+        let mut solid = Mesh::cube(1.0);
+        solid.face_uvs = vec![[[0.0, 0.0], [0.5, 0.0], [0.5, 0.5]]; solid.face_count()];
+        solid.face_uvs[1][0] = [1.0, 1.0];
+        solid.base_color = Some(BaseColorImage {
+            mime_type: "image/png".into(),
+            bytes: encode_png(1, 1, &[255, 0, 0]),
+        });
+        let baked = solid.to_glb().unwrap();
+        let loaded = Mesh::from_glb(&baked).unwrap();
+        assert_eq!(loaded.vertex_count(), solid.vertex_count());
+        assert!(analyze_topology(&loaded).is_watertight);
+        assert!(color_bytes(&baked, &glb_json(&baked))
+            .chunks(3)
+            .all(|rgb| rgb == [255, 0, 0]));
+    }
+
+    #[test]
+    fn test_glb_keeps_the_texture_when_corner_uvs_agree() {
+        let mut mesh = Mesh::cube(1.0);
+        mesh.face_uvs = vec![[[0.25, 0.5]; 3]; mesh.face_count()];
+        mesh.base_color = Some(BaseColorImage {
+            mime_type: "image/png".into(),
+            bytes: encode_png(1, 1, &[0, 255, 0]),
+        });
+        let doc = glb_json(&mesh.to_glb().unwrap());
+        let attributes = &doc["meshes"][0]["primitives"][0]["attributes"];
+        assert!(attributes.get("TEXCOORD_0").is_some());
+        assert!(attributes.get("COLOR_0").is_none());
+        assert!(doc.get("images").is_some());
+    }
+
+    fn encode_png(width: u32, height: u32, rgb: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut encoder = png::Encoder::new(&mut bytes, width, height);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(rgb).unwrap();
+        drop(writer);
+        bytes
+    }
+
+    fn glb_json(bytes: &[u8]) -> serde_json::Value {
+        let json_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+        serde_json::from_slice(&bytes[20..20 + json_len]).unwrap()
+    }
+
+    fn color_bytes(glb: &[u8], doc: &serde_json::Value) -> Vec<u8> {
+        let accessor_index = doc["meshes"][0]["primitives"][0]["attributes"]["COLOR_0"]
+            .as_u64()
+            .unwrap() as usize;
+        let accessor = &doc["accessors"][accessor_index];
+        assert_eq!(accessor["componentType"], 5121);
+        assert_eq!(accessor["normalized"], true);
+        let view = &doc["bufferViews"][accessor["bufferView"].as_u64().unwrap() as usize];
+        let offset = view["byteOffset"].as_u64().unwrap() as usize;
+        let len = view["byteLength"].as_u64().unwrap() as usize;
+        let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
+        let bin_off = 20 + json_len;
+        let bin_len = u32::from_le_bytes(glb[bin_off..bin_off + 4].try_into().unwrap()) as usize;
+        assert!(offset + len <= bin_len);
+        glb[bin_off + 8 + offset..bin_off + 8 + offset + len].to_vec()
     }
 
     #[test]

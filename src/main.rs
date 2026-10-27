@@ -230,6 +230,12 @@ fn run_repair(args: RepairArgs) -> Result<(), Box<dyn std::error::Error>> {
         for line in &report.log {
             println!("  {} {}", "•".cyan(), line);
         }
+        if closed.bakes_vertex_colors() {
+            println!(
+                "  {} Baked the base color into vertex colors so welded vertices stay shared",
+                "•".cyan()
+            );
+        }
         println!("\n{}", report.health);
         println!(
             "{} Saving repaired mesh to: {}",
